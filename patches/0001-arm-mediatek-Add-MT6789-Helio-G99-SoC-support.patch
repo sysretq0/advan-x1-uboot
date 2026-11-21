@@ -1,16 +1,14 @@
-From ed91e6adbc4c9754cca2dda58ddb093e2029bb69 Mon Sep 17 00:00:00 2001
+From 33edff9a51805d8b74f3115d6f5088cd404ee55e Mon Sep 17 00:00:00 2001
 From: sysretq0 <324514544+sysretq0@users.noreply.github.com>
-Date: Sat, 21 Nov 2026 09:17:15 +0000
-Subject: [PATCH 1/6] arm: mediatek: Add MT6789 (Helio G99) SoC support
+Date: Sat, 21 Nov 2026 18:44:38 +0000
+Subject: [PATCH] arm: mediatek: Add MT6789 (Helio G99) SoC support
 
-Change-Id: Ia1bb1bfd698c8508e7bed47cf15778917ba7ea10
-Signed-off-by: sysretq0 <324514544+sysretq0@users.noreply.github.com>
 ---
- arch/arm/mach-mediatek/Kconfig         |  11 +++
+ arch/arm/mach-mediatek/Kconfig         |  11 ++
  arch/arm/mach-mediatek/Makefile        |   3 +
  arch/arm/mach-mediatek/mt6789/Makefile |   3 +
- arch/arm/mach-mediatek/mt6789/init.c   | 126 +++++++++++++++++++++++++
- 4 files changed, 143 insertions(+)
+ arch/arm/mach-mediatek/mt6789/init.c   | 139 +++++++++++++++++++++++++
+ 4 files changed, 156 insertions(+)
  create mode 100644 arch/arm/mach-mediatek/mt6789/Makefile
  create mode 100644 arch/arm/mach-mediatek/mt6789/init.c
 
@@ -80,10 +78,10 @@ index 00000000..b9a1e6b6
 +obj-y += init.o
 diff --git a/arch/arm/mach-mediatek/mt6789/init.c b/arch/arm/mach-mediatek/mt6789/init.c
 new file mode 100644
-index 00000000..2b60fa81
+index 00000000..14e3b120
 --- /dev/null
 +++ b/arch/arm/mach-mediatek/mt6789/init.c
-@@ -0,0 +1,126 @@
+@@ -0,0 +1,139 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * MediaTek MT6789 (Helio G99 / MT8781) SoC initialization and memory map.
@@ -95,6 +93,7 @@ index 00000000..2b60fa81
 + * trigger bus firewall SErrors.
 + */
 +
++#include <cpu_func.h>
 +#include <fdtdec.h>
 +#include <init.h>
 +#include <stdio.h>
@@ -124,24 +123,16 @@ index 00000000..2b60fa81
 +		.attrs = PTE_BLOCK_MEMTYPE(MT_NORMAL) | PTE_BLOCK_OUTER_SHARE,
 +	},
 +	{
-+		/* Mid DRAM: U-Boot staging/relocation & Linux bundle (stops before TEE @ 0x70000000) */
-+		.virt = 0x50000000UL,
-+		.phys = 0x50000000UL,
-+		.size = 0x1f000000UL,
-+		.attrs = PTE_BLOCK_MEMTYPE(MT_NORMAL) | PTE_BLOCK_OUTER_SHARE,
-+	},
-+	{
-+		/* Clean DRAM above TEE/consys (stops before SSPM @ 0x9FD60000) */
-+		.virt = 0x80000000UL,
-+		.phys = 0x80000000UL,
-+		.size = 0x1fc00000UL,
-+		.attrs = PTE_BLOCK_MEMTYPE(MT_NORMAL) | PTE_BLOCK_OUTER_SHARE,
-+	},
-+	{
-+		/* Clean DRAM above SSPM (stops before Wi-Fi/MCUPM/SCP @ 0xBF000000) */
-+		.virt = 0xa0000000UL,
-+		.phys = 0xa0000000UL,
-+		.size = 0x1f000000UL,
++		/*
++		 * Mid DRAM: U-Boot staging/relocation & Linux bundle.
++		 * Starts above aee_lk/stock LK (0x50700000..0x51000000) and
++		 * stops before TrustZone TEE (0x70000000). EMI-MPU firewalled
++		 * modem/SCP/SSPM/RKP windows in 0x70000000..0xFDFFFFFF are
++		 * deliberately left unmapped.
++		 */
++		.virt = 0x51000000UL,
++		.phys = 0x51000000UL,
++		.size = 0x1e000000UL,
 +		.attrs = PTE_BLOCK_MEMTYPE(MT_NORMAL) | PTE_BLOCK_OUTER_SHARE,
 +	},
 +	{
@@ -166,6 +157,26 @@ index 00000000..2b60fa81
 +};
 +
 +struct mm_region *mem_map = mt6789_mem_map;
++
++/*
++ * Active framebuffer physical address handed off in x0 by Stage-1 LK
++ * (stored in .data so clear_bss does not wipe it before board_fix_fdt).
++ */
++u32 mt6789_boot_fb __section(".data");
++
++__asm__(
++	".globl save_boot_params\n"
++	"save_boot_params:\n"
++	"	adrp	x9, mt6789_boot_fb\n"
++	"	add	x9, x9, :lo12:mt6789_boot_fb\n"
++	"	str	w0, [x9]\n"
++	"	b	save_boot_params_ret\n"
++);
++
++int mach_cpu_init(void)
++{
++	return 0;
++}
 +
 +u64 get_page_table_size(void)
 +{

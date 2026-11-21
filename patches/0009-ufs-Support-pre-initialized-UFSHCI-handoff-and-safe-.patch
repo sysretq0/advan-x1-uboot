@@ -1,0 +1,262 @@
+From f7b214e591eab574682d17bd31d3ff7beaf9a210 Mon Sep 17 00:00:00 2001
+From: sysretq0 <324514544+sysretq0@users.noreply.github.com>
+Date: Sat, 21 Nov 2026 18:44:40 +0000
+Subject: [PATCH] ufs: Support pre-initialized UFSHCI handoff and safe PRDT
+ transfers
+
+---
+ drivers/ufs/ufs-mediatek.c |  23 ++++----
+ drivers/ufs/ufs-uclass.c   | 110 ++++++++++++++++++++++++++++++++-----
+ drivers/ufs/ufs.h          |   6 ++
+ 3 files changed, 115 insertions(+), 24 deletions(-)
+
+diff --git a/drivers/ufs/ufs-mediatek.c b/drivers/ufs/ufs-mediatek.c
+index 268627d5..8b3f6add 100644
+--- a/drivers/ufs/ufs-mediatek.c
++++ b/drivers/ufs/ufs-mediatek.c
+@@ -107,10 +107,6 @@ static int ufs_mtk_pre_link(struct ufs_hba *hba)
+ 	tmp &= ~(1 << 6);
+ 
+ 	ret = ufshcd_dme_set(hba, UIC_ARG_MIB(VS_SAVEPOWERCONTROL), tmp);
+-	if (ret)
+-		return ret;
+-
+-	ret = ufshcd_dme_set(hba, UIC_ARG_MIB(PA_SCRAMBLING), tmp);
+ 
+ 	return ret;
+ }
+@@ -329,14 +325,21 @@ static int ufs_mtk_init(struct ufs_hba *hba)
+ 		goto err_clk_enable;
+ 	}
+ 
+-	err = generic_phy_power_on(&priv->mphy);
+-	if (err) {
+-		dev_err(hba->dev, "%s: phy init failed, err = %d\n",
+-			__func__, err);
+-		goto err_phy_power_on;
++	if (generic_phy_valid(&priv->mphy)) {
++		err = generic_phy_power_on(&priv->mphy);
++		if (err) {
++			dev_err(hba->dev, "%s: phy init failed, err = %d\n",
++				__func__, err);
++			goto err_phy_power_on;
++		}
+ 	}
+ 
+-	ufs_mtk_setup_ref_clk(hba, true);
++	if ((ufshcd_readl(hba, REG_CONTROLLER_ENABLE) & CONTROLLER_ENABLE) &&
++	    (ufshcd_readl(hba, REG_CONTROLLER_STATUS) & DEVICE_PRESENT)) {
++		hba->quirks |= UFSHCD_QUIRK_KEEP_LINK_ACTIVE;
++	} else {
++		ufs_mtk_setup_ref_clk(hba, true);
++	}
+ 	ufs_mtk_get_hw_ip_version(hba);
+ 
+ 	return 0;
+diff --git a/drivers/ufs/ufs-uclass.c b/drivers/ufs/ufs-uclass.c
+index 2ca4fb2a..866aec59 100644
+--- a/drivers/ufs/ufs-uclass.c
++++ b/drivers/ufs/ufs-uclass.c
+@@ -419,8 +419,9 @@ static inline int ufshcd_get_lists_status(u32 reg)
+  */
+ static void ufshcd_enable_run_stop_reg(struct ufs_hba *hba)
+ {
+-	ufshcd_writel(hba, UTP_TASK_REQ_LIST_RUN_STOP_BIT,
+-		      REG_UTP_TASK_REQ_LIST_RUN_STOP);
++	if (hba->utmrdl)
++		ufshcd_writel(hba, UTP_TASK_REQ_LIST_RUN_STOP_BIT,
++			      REG_UTP_TASK_REQ_LIST_RUN_STOP);
+ 	ufshcd_writel(hba, UTP_TRANSFER_REQ_LIST_RUN_STOP_BIT,
+ 		      REG_UTP_TRANSFER_REQ_LIST_RUN_STOP);
+ }
+@@ -471,10 +472,12 @@ static int ufshcd_make_hba_operational(struct ufs_hba *hba)
+ 		      REG_UTP_TRANSFER_REQ_LIST_BASE_L);
+ 	ufshcd_writel(hba, upper_32_bits(dev_phys_to_bus(hba->dev, (phys_addr_t)(uintptr_t)(hba->utrdl))),
+ 		      REG_UTP_TRANSFER_REQ_LIST_BASE_H);
+-	ufshcd_writel(hba, lower_32_bits(dev_phys_to_bus(hba->dev, (phys_addr_t)(uintptr_t)(hba->utmrdl))),
+-		      REG_UTP_TASK_REQ_LIST_BASE_L);
+-	ufshcd_writel(hba, upper_32_bits(dev_phys_to_bus(hba->dev, (phys_addr_t)(uintptr_t)(hba->utmrdl))),
+-		      REG_UTP_TASK_REQ_LIST_BASE_H);
++	if (hba->utmrdl) {
++		ufshcd_writel(hba, lower_32_bits(dev_phys_to_bus(hba->dev, (phys_addr_t)(uintptr_t)(hba->utmrdl))),
++			      REG_UTP_TASK_REQ_LIST_BASE_L);
++		ufshcd_writel(hba, upper_32_bits(dev_phys_to_bus(hba->dev, (phys_addr_t)(uintptr_t)(hba->utmrdl))),
++			      REG_UTP_TASK_REQ_LIST_BASE_H);
++	}
+ 
+ 	/*
+ 	 * Make sure base address and interrupt setup are updated before
+@@ -914,8 +917,13 @@ static int ufshcd_send_command(struct ufs_hba *hba, unsigned int task_tag)
+ 	unsigned long start;
+ 	u32 intr_status;
+ 	u32 enabled_intr_status;
++	u32 db_mask = 1U << task_tag;
++
++	/* Clear any stale transfer completion interrupt before ringing doorbell */
++	ufshcd_writel(hba, UTP_TRANSFER_REQ_COMPL, REG_INTERRUPT_STATUS);
++	wmb();
+ 
+-	ufshcd_writel(hba, 1 << task_tag, REG_UTP_TRANSFER_REQ_DOOR_BELL);
++	ufshcd_writel(hba, db_mask, REG_UTP_TRANSFER_REQ_DOOR_BELL);
+ 
+ 	/* Make sure doorbell reg is updated before reading interrupt status */
+ 	wmb();
+@@ -924,13 +932,16 @@ static int ufshcd_send_command(struct ufs_hba *hba, unsigned int task_tag)
+ 	do {
+ 		intr_status = ufshcd_readl(hba, REG_INTERRUPT_STATUS);
+ 		enabled_intr_status = intr_status & hba->intr_mask;
+-		ufshcd_writel(hba, intr_status, REG_INTERRUPT_STATUS);
++		if (intr_status)
++			ufshcd_writel(hba, intr_status, REG_INTERRUPT_STATUS);
+ 
+ 		if (hba->max_pwr_info.info.pwr_rx != SLOWAUTO_MODE &&
+ 		    hba->max_pwr_info.info.pwr_tx != SLOWAUTO_MODE) {
+ 			if (get_timer(start) > QUERY_REQ_TIMEOUT) {
+ 				dev_err(hba->dev,
+-					"Timedout waiting for UTP response\n");
++					"Timedout waiting for UTP response (db=0x%x is=0x%x)\n",
++					ufshcd_readl(hba, REG_UTP_TRANSFER_REQ_DOOR_BELL),
++					intr_status);
+ 				return -ETIMEDOUT;
+ 			}
+ 		}
+@@ -941,7 +952,16 @@ static int ufshcd_send_command(struct ufs_hba *hba, unsigned int task_tag)
+ 
+ 			return -1;
+ 		}
+-	} while (!(enabled_intr_status & UTP_TRANSFER_REQ_COMPL));
++	} while ((ufshcd_readl(hba, REG_UTP_TRANSFER_REQ_DOOR_BELL) & db_mask) &&
++		 !(enabled_intr_status & UTP_TRANSFER_REQ_COMPL));
++
++	/* Ensure the doorbell bit has fully cleared before reading DMA buffers */
++	while (ufshcd_readl(hba, REG_UTP_TRANSFER_REQ_DOOR_BELL) & db_mask) {
++		if (get_timer(start) > QUERY_REQ_TIMEOUT) {
++			dev_err(hba->dev, "Timedout waiting for UTRLDBR clear\n");
++			return -ETIMEDOUT;
++		}
++	}
+ 
+ 	return 0;
+ }
+@@ -1679,7 +1699,9 @@ static int ufs_scsi_exec(struct udevice *scsi_dev, struct scsi_cmd *pccb)
+ 	u32 upiu_flags;
+ 	int ocs, result = 0;
+ 	u8 scsi_status;
++	int retries = 1;
+ 
++retry:
+ 	pccb->status = 0;
+ 	pccb->sensedatalen = 0;
+ 
+@@ -1687,11 +1709,18 @@ static int ufs_scsi_exec(struct udevice *scsi_dev, struct scsi_cmd *pccb)
+ 	ufshcd_prepare_utp_scsi_cmd_upiu(hba, pccb, upiu_flags);
+ 	prepare_prdt_table(hba, pccb);
+ 
+-	ufshcd_cache_flush(pccb->pdata, pccb->datalen);
++	if (pccb->datalen)
++		ufshcd_cache_flush(pccb->pdata, pccb->datalen);
+ 
+-	ufshcd_send_command(hba, TASK_TAG);
++	result = ufshcd_send_command(hba, TASK_TAG);
++	if (result) {
++		dev_err(hba->dev, "ufs scsi send err %d (cmd=0x%02x lun=%d len=%lu)\n",
++			result, pccb->cmd[0], pccb->lun, pccb->datalen);
++		return result;
++	}
+ 
+-	ufshcd_cache_invalidate(pccb->pdata, pccb->datalen);
++	if (pccb->datalen)
++		ufshcd_cache_invalidate(pccb->pdata, pccb->datalen);
+ 
+ 	ocs = ufshcd_get_tr_ocs(hba);
+ 	switch (ocs) {
+@@ -1704,8 +1733,19 @@ static int ufs_scsi_exec(struct udevice *scsi_dev, struct scsi_cmd *pccb)
+ 			scsi_status = result & MASK_SCSI_STATUS;
+ 			if (scsi_status) {
+ 				pccb->status = scsi_status;
+-				if (scsi_status == S_CHECK_COND)
++				if (scsi_status == S_CHECK_COND) {
+ 					ufs_scsi_copy_sense(hba, pccb);
++					if (retries-- > 0 &&
++					    pccb->sensedatalen >= 3 &&
++					    (pccb->sense_buf[2] & 0x0f) == 0x06)
++						goto retry;
++				}
++				dev_err(hba->dev,
++					"ufs scsi status=0x%02x (cmd=0x%02x lun=%d len=%lu sk=0x%x asc=0x%x)\n",
++					scsi_status, pccb->cmd[0], pccb->lun,
++					pccb->datalen,
++					pccb->sensedatalen >= 3 ? (pccb->sense_buf[2] & 0x0f) : 0,
++					pccb->sensedatalen >= 13 ? pccb->sense_buf[12] : 0);
+ 				return -EINVAL;
+ 			}
+ 
+@@ -2276,6 +2316,48 @@ int ufshcd_probe(struct udevice *ufs_dev, struct ufs_hba_ops *hba_ops)
+ 
+ 	mb(); /* flush previous writes */
+ 
++	/*
++	 * If a previous bootloader stage already brought up UFSHCI and the
++	 * UniPro link is live, quiesce its UTRL/UTMRL queues and hand over
++	 * to U-Boot's descriptor lists without resetting HCE or M-PHY.
++	 */
++	if ((hba->quirks & UFSHCD_QUIRK_KEEP_LINK_ACTIVE) &&
++	    (ufshcd_readl(hba, REG_CONTROLLER_ENABLE) & CONTROLLER_ENABLE) &&
++	    ufshcd_is_device_present(hba)) {
++		struct ufs_dev_desc card = {0};
++
++		ufshcd_writel(hba, 0, REG_UTP_TRANSFER_REQ_LIST_RUN_STOP);
++		ufshcd_writel(hba, 0, REG_UTP_TASK_REQ_LIST_RUN_STOP);
++		wmb();
++
++		err = ufshcd_wait_for_register(hba,
++					       REG_UTP_TRANSFER_REQ_LIST_RUN_STOP,
++					       UTP_TRANSFER_REQ_LIST_RUN_STOP_BIT,
++					       0, 100);
++		if (!err)
++			err = ufshcd_wait_for_register(hba,
++						       REG_UTP_TASK_REQ_LIST_RUN_STOP,
++						       UTP_TASK_REQ_LIST_RUN_STOP_BIT,
++						       0, 100);
++		if (!err)
++			err = ufshcd_make_hba_operational(hba);
++		if (!err)
++			err = ufshcd_verify_dev_init(hba);
++		if (!err) {
++			ufshcd_init_desc_sizes(hba);
++			err = ufs_get_device_desc(hba, &card);
++		}
++		if (!err) {
++			/* Keep each UTP transfer within one PRDT entry (128 KiB = 32 x 4 KiB) */
++			scsi_plat->max_bytes_per_req = 128 * 1024;
++			return 0;
++		}
++
++		dev_warn(hba->dev,
++			 "Pre-initialized UFS handoff failed (%d), falling back to full init\n",
++			 err);
++	}
++
+ 	/* Reset the attached device */
+ 	err = ufshcd_vops_device_reset(hba);
+ 	if (err) {
+diff --git a/drivers/ufs/ufs.h b/drivers/ufs/ufs.h
+index 9f557356..f1784426 100644
+--- a/drivers/ufs/ufs.h
++++ b/drivers/ufs/ufs.h
+@@ -694,6 +694,12 @@ enum ufshcd_quirks {
+ 	 * single doorbell mode.
+ 	 */
+ 	UFSHCD_QUIRK_BROKEN_LSDBS_CAP			= 1 << 25,
++
++	/*
++	 * Keep a pre-initialized UFSHCI controller and UniPro link active
++	 * when chainloaded from an earlier bootloader stage.
++	 */
++	UFSHCD_QUIRK_KEEP_LINK_ACTIVE			= 1 << 26,
+ };
+ 
+ struct ufs_hba {
+-- 
+2.55.0
+

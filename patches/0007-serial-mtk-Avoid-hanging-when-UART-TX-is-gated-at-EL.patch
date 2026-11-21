@@ -1,0 +1,79 @@
+From 95981f674a30085b1a8c6d268dfe1f659b2c9ed3 Mon Sep 17 00:00:00 2001
+From: sysretq0 <324514544+sysretq0@users.noreply.github.com>
+Date: Sat, 21 Nov 2026 18:44:39 +0000
+Subject: [PATCH] serial: mtk: Avoid hanging when UART TX is gated at EL2
+
+---
+ drivers/serial/serial_mtk.c | 28 ++++++++++++++++++++++++++--
+ 1 file changed, 26 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/serial/serial_mtk.c b/drivers/serial/serial_mtk.c
+index 16e4fc08..20f9dcbd 100644
+--- a/drivers/serial/serial_mtk.c
++++ b/drivers/serial/serial_mtk.c
+@@ -97,6 +97,7 @@ struct mtk_serial_priv {
+ 	u32 fixed_clk_rate;
+ 	bool force_highspeed;
+ 	bool upstream_highspeed_logic;
++	bool tx_disabled;
+ };
+ 
+ static const unsigned short fraction_l_mapping[] = {
+@@ -182,8 +183,20 @@ set_baud:
+ 
+ static int _mtk_serial_putc(struct mtk_serial_priv *priv, const char ch)
+ {
+-	if (!(readl(&priv->regs->lsr) & UART_LSR_THRE))
+-		return -EAGAIN;
++	int timeout = 1000;
++
++	if (priv->tx_disabled) {
++		if (!(readl(&priv->regs->lsr) & UART_LSR_THRE))
++			return 0;
++		priv->tx_disabled = false;
++	}
++
++	while (!(readl(&priv->regs->lsr) & UART_LSR_THRE)) {
++		if (--timeout <= 0) {
++			priv->tx_disabled = true;
++			return 0;
++		}
++	}
+ 
+ 	writel(ch, &priv->regs->thr);
+ 
+@@ -205,6 +218,8 @@ static int _mtk_serial_pending(struct mtk_serial_priv *priv, bool input)
+ {
+ 	if (input)
+ 		return (readl(&priv->regs->lsr) & UART_LSR_DR) ? 1 : 0;
++	else if (priv->tx_disabled)
++		return 0;
+ 	else
+ 		return (readl(&priv->regs->lsr) & UART_LSR_THRE) ? 0 : 1;
+ }
+@@ -252,6 +267,7 @@ static int mtk_serial_pending(struct udevice *dev, bool input)
+ static int mtk_serial_probe(struct udevice *dev)
+ {
+ 	struct mtk_serial_priv *priv = dev_get_priv(dev);
++	int timeout = 1000;
+ 
+ 	/* Disable interrupt */
+ 	writel(0, &priv->regs->ier);
+@@ -262,6 +278,14 @@ static int mtk_serial_probe(struct udevice *dev)
+ 	clk_enable(&priv->clk);
+ 	clk_enable(&priv->clk_bus);
+ 
++	/* Detect gated/disabled UART0 (e.g. after ATF BL31 kernel-stage SMC) */
++	while (!(readl(&priv->regs->lsr) & UART_LSR_THRE)) {
++		if (--timeout <= 0) {
++			priv->tx_disabled = true;
++			break;
++		}
++	}
++
+ 	return 0;
+ }
+ 
+-- 
+2.55.0
+
