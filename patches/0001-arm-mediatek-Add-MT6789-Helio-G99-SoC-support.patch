@@ -1,16 +1,16 @@
-From 0729a417b8c77bd66dcc394c2306c1327bda95f1 Mon Sep 17 00:00:00 2001
+From ed91e6adbc4c9754cca2dda58ddb093e2029bb69 Mon Sep 17 00:00:00 2001
 From: sysretq0 <324514544+sysretq0@users.noreply.github.com>
-Date: Sat, 21 Nov 2026 08:16:33 +0000
+Date: Sat, 21 Nov 2026 09:17:15 +0000
 Subject: [PATCH 1/6] arm: mediatek: Add MT6789 (Helio G99) SoC support
 
-Change-Id: I61818460ddae10c70c46301257ae7b3f115d48a8
+Change-Id: Ia1bb1bfd698c8508e7bed47cf15778917ba7ea10
 Signed-off-by: sysretq0 <324514544+sysretq0@users.noreply.github.com>
 ---
  arch/arm/mach-mediatek/Kconfig         |  11 +++
  arch/arm/mach-mediatek/Makefile        |   3 +
  arch/arm/mach-mediatek/mt6789/Makefile |   3 +
- arch/arm/mach-mediatek/mt6789/init.c   | 116 +++++++++++++++++++++++++
- 4 files changed, 133 insertions(+)
+ arch/arm/mach-mediatek/mt6789/init.c   | 126 +++++++++++++++++++++++++
+ 4 files changed, 143 insertions(+)
  create mode 100644 arch/arm/mach-mediatek/mt6789/Makefile
  create mode 100644 arch/arm/mach-mediatek/mt6789/init.c
 
@@ -80,10 +80,10 @@ index 00000000..b9a1e6b6
 +obj-y += init.o
 diff --git a/arch/arm/mach-mediatek/mt6789/init.c b/arch/arm/mach-mediatek/mt6789/init.c
 new file mode 100644
-index 00000000..f682cd40
+index 00000000..2b60fa81
 --- /dev/null
 +++ b/arch/arm/mach-mediatek/mt6789/init.c
-@@ -0,0 +1,116 @@
+@@ -0,0 +1,126 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * MediaTek MT6789 (Helio G99 / MT8781) SoC initialization and memory map.
@@ -166,6 +166,16 @@ index 00000000..f682cd40
 +};
 +
 +struct mm_region *mem_map = mt6789_mem_map;
++
++u64 get_page_table_size(void)
++{
++	/*
++	 * Reserve generous page-table space (64 tables) so simplefb's runtime
++	 * mmu_map_region() on the 4 KiB-aligned framebuffer (0xFE007000) can
++	 * split 2 MiB blocks into L3 pages without exhausting tlb_fillptr.
++	 */
++	return SZ_256K;
++}
 +
 +int dram_init(void)
 +{

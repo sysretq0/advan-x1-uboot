@@ -1,9 +1,9 @@
-From 9437a2afc7a98113f2742ac1c02bf458f7d244a3 Mon Sep 17 00:00:00 2001
+From b921f4a522f08fbe946691f415af57eb68741fa8 Mon Sep 17 00:00:00 2001
 From: sysretq0 <324514544+sysretq0@users.noreply.github.com>
-Date: Sat, 21 Nov 2026 08:20:30 +0000
+Date: Sat, 21 Nov 2026 09:17:18 +0000
 Subject: [PATCH 4/6] usb: musb-new: Add generic MediaTek MUSB glue driver
 
-Change-Id: I129b57b3ca2dd3fbc25192cdfdeca59b69289264
+Change-Id: Ie1aa37e924e9bb67ea04b53c0021d6113a738bad
 Signed-off-by: sysretq0 <324514544+sysretq0@users.noreply.github.com>
 ---
  drivers/usb/musb-new/Kconfig    |   8 +

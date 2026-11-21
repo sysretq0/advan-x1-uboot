@@ -1,10 +1,10 @@
-From 114b13287edc07828c1f3c04fec50190208e5006 Mon Sep 17 00:00:00 2001
+From e8a652fef29f5da38ca5d95aacf16c21ebe2a64c Mon Sep 17 00:00:00 2001
 From: sysretq0 <324514544+sysretq0@users.noreply.github.com>
-Date: Sat, 21 Nov 2026 08:43:01 +0000
+Date: Sat, 21 Nov 2026 09:17:19 +0000
 Subject: [PATCH 6/6] board: mediatek: Add Advan X1 (MT6789) board, DTS, and
  defconfig
 
-Change-Id: I88016b3e1efba68077f1b0055288da2b9ad5a2ee
+Change-Id: I48fa7aacc94209760415e7ed4402f9d1db1f7ec5
 Signed-off-by: sysretq0 <324514544+sysretq0@users.noreply.github.com>
 ---
  arch/arm/dts/Makefile             |   1 +
@@ -12,10 +12,10 @@ Signed-off-by: sysretq0 <324514544+sysretq0@users.noreply.github.com>
  arch/arm/dts/mt6789.dtsi          | 221 ++++++++++++++++++++++++++++++
  board/mediatek/mt6789/MAINTAINERS |  10 ++
  board/mediatek/mt6789/Makefile    |   3 +
- board/mediatek/mt6789/mt6789.c    |  74 ++++++++++
+ board/mediatek/mt6789/mt6789.c    |  75 ++++++++++
  configs/mt6789_advan_x1_defconfig |  78 +++++++++++
  include/configs/mt6789.h          |  41 ++++++
- 8 files changed, 554 insertions(+)
+ 8 files changed, 555 insertions(+)
  create mode 100644 arch/arm/dts/mt6789-advan-x1.dts
  create mode 100644 arch/arm/dts/mt6789.dtsi
  create mode 100644 board/mediatek/mt6789/MAINTAINERS
@@ -422,10 +422,10 @@ index 00000000..7e9ce797
 +obj-y += mt6789.o
 diff --git a/board/mediatek/mt6789/mt6789.c b/board/mediatek/mt6789/mt6789.c
 new file mode 100644
-index 00000000..3f4d9038
+index 00000000..bae9d312
 --- /dev/null
 +++ b/board/mediatek/mt6789/mt6789.c
-@@ -0,0 +1,74 @@
+@@ -0,0 +1,75 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Board support for Advan X1 (MediaTek MT6789 / Helio G99).
@@ -471,7 +471,8 @@ index 00000000..3f4d9038
 +				cpu_to_fdt32(0),
 +				cpu_to_fdt32(MT6789_FB_SIZE_BYTES),
 +			};
-+			fdt_setprop(rw_fdt_blob, node, "reg", reg, sizeof(reg));
++			fdt_setprop_inplace(rw_fdt_blob, node, "reg",
++					    reg, sizeof(reg));
 +		}
 +	}
 +

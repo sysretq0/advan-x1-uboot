@@ -1,10 +1,10 @@
-From 9faee685f46718513334fb408df785e3988d3c95 Mon Sep 17 00:00:00 2001
+From 8f4338f5404edb0da9cb99bb1d3c9481bf548f9e Mon Sep 17 00:00:00 2001
 From: sysretq0 <324514544+sysretq0@users.noreply.github.com>
-Date: Sat, 21 Nov 2026 08:21:25 +0000
+Date: Sat, 21 Nov 2026 09:17:18 +0000
 Subject: [PATCH 5/6] button: Add MediaTek KPD matrix and MT6358/MT6366 PMIC
  key drivers
 
-Change-Id: If6f5edbb7595e02d96c9a4781d0696c540a71c89
+Change-Id: I80f7508c7aef060edcbcf6260ac4b2b77fdc390f
 Signed-off-by: sysretq0 <324514544+sysretq0@users.noreply.github.com>
 ---
  drivers/button/Kconfig           |   7 +

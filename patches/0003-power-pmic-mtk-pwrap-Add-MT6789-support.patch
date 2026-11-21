@@ -1,9 +1,9 @@
-From 34e651d975b335891549dca7ef66db1bdd5e41ba Mon Sep 17 00:00:00 2001
+From 408b1c5fd9f0309a26cfd167ca1ac6479754be9a Mon Sep 17 00:00:00 2001
 From: sysretq0 <324514544+sysretq0@users.noreply.github.com>
-Date: Sat, 21 Nov 2026 08:19:43 +0000
+Date: Sat, 21 Nov 2026 09:17:17 +0000
 Subject: [PATCH 3/6] power: pmic: mtk-pwrap: Add MT6789 support
 
-Change-Id: Ie87715a64e9e3fb5b9ca2193595c7916e0088358
+Change-Id: I6d15252a227f5281a6f3f19b6612e1a2f04edc90
 Signed-off-by: sysretq0 <324514544+sysretq0@users.noreply.github.com>
 ---
  drivers/power/pmic/mtk-pwrap.c | 1 +
