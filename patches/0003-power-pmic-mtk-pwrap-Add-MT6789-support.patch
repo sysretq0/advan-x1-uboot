@@ -1,0 +1,26 @@
+From 34e651d975b335891549dca7ef66db1bdd5e41ba Mon Sep 17 00:00:00 2001
+From: sysretq0 <324514544+sysretq0@users.noreply.github.com>
+Date: Sat, 21 Nov 2026 08:19:43 +0000
+Subject: [PATCH 3/6] power: pmic: mtk-pwrap: Add MT6789 support
+
+Change-Id: Ie87715a64e9e3fb5b9ca2193595c7916e0088358
+Signed-off-by: sysretq0 <324514544+sysretq0@users.noreply.github.com>
+---
+ drivers/power/pmic/mtk-pwrap.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/power/pmic/mtk-pwrap.c b/drivers/power/pmic/mtk-pwrap.c
+index 468af1fb..331805be 100644
+--- a/drivers/power/pmic/mtk-pwrap.c
++++ b/drivers/power/pmic/mtk-pwrap.c
+@@ -885,6 +885,7 @@ static const struct pmic_wrapper_type pwrap_mt8365 = {
+ };
+ 
+ static const struct udevice_id mtk_pwrap_ids[] = {
++	{ .compatible = "mediatek,mt6789-pwrap", .data = (ulong)&pwrap_mt8195 },
+ 	{ .compatible = "mediatek,mt8195-pwrap", .data = (ulong)&pwrap_mt8195 },
+ 	{ .compatible = "mediatek,mt8365-pwrap", .data = (ulong)&pwrap_mt8365 },
+ 	{ .compatible = "mediatek,mt8366-pwrap", .data = (ulong)&pwrap_mt8195 },
+-- 
+2.55.0
+

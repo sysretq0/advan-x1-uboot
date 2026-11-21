@@ -1,0 +1,221 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * MediaTek MT6789 (Helio G99 / MT8781) SoC Device Tree for U-Boot.
+ *
+ * Peripheral base addresses, clocks, interrupts, and compatible strings are
+ * derived directly from verified Advan X1 mainline Linux & loki mappings.
+ */
+
+#include <dt-bindings/clock/mt6789-clk.h>
+#include <dt-bindings/interrupt-controller/arm-gic.h>
+#include <dt-bindings/interrupt-controller/irq.h>
+#include <dt-bindings/phy/phy.h>
+#include <dt-bindings/reset/mt6789-resets.h>
+
+/ {
+	compatible = "mediatek,mt6789";
+	interrupt-parent = <&gic>;
+	#address-cells = <2>;
+	#size-cells = <2>;
+
+	cpus {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		cpu0: cpu@0 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a55";
+			reg = <0x000>;
+			enable-method = "psci";
+		};
+
+		cpu1: cpu@100 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a55";
+			reg = <0x100>;
+			enable-method = "psci";
+		};
+
+		cpu2: cpu@200 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a55";
+			reg = <0x200>;
+			enable-method = "psci";
+		};
+
+		cpu3: cpu@300 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a55";
+			reg = <0x300>;
+			enable-method = "psci";
+		};
+
+		cpu4: cpu@400 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a55";
+			reg = <0x400>;
+			enable-method = "psci";
+		};
+
+		cpu5: cpu@500 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a55";
+			reg = <0x500>;
+			enable-method = "psci";
+		};
+
+		cpu6: cpu@600 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a76";
+			reg = <0x600>;
+			enable-method = "psci";
+		};
+
+		cpu7: cpu@700 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a76";
+			reg = <0x700>;
+			enable-method = "psci";
+		};
+	};
+
+	psci {
+		compatible = "arm,psci-1.0", "arm,psci-0.2";
+		method = "smc";
+	};
+
+	timer {
+		compatible = "arm,armv8-timer";
+		interrupts = <GIC_PPI 13 IRQ_TYPE_LEVEL_LOW>,
+			     <GIC_PPI 14 IRQ_TYPE_LEVEL_LOW>,
+			     <GIC_PPI 11 IRQ_TYPE_LEVEL_LOW>,
+			     <GIC_PPI 10 IRQ_TYPE_LEVEL_LOW>;
+		clock-frequency = <13000000>;
+	};
+
+	clk26m: oscillator-26m {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <26000000>;
+		clock-output-names = "clk26m";
+		bootph-all;
+	};
+
+	clk32k: oscillator-32k {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <32768>;
+		clock-output-names = "clk32k";
+		bootph-all;
+	};
+
+	soc: soc {
+		compatible = "simple-bus";
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+		bootph-all;
+
+		gic: interrupt-controller@c000000 {
+			compatible = "arm,gic-v3";
+			#interrupt-cells = <3>;
+			interrupt-controller;
+			reg = <0x0 0x0c000000 0x0 0x40000>,
+			      <0x0 0x0c040000 0x0 0x200000>;
+		};
+
+		topckgen: clock-controller@10000000 {
+			compatible = "mediatek,mt6789-topckgen", "syscon";
+			reg = <0x0 0x10000000 0x0 0x1000>;
+			#clock-cells = <1>;
+			bootph-all;
+		};
+
+		infracfg_ao: clock-controller@10001000 {
+			compatible = "mediatek,mt6789-infracfg_ao", "syscon";
+			reg = <0x0 0x10001000 0x0 0x1000>;
+			#clock-cells = <1>;
+			bootph-all;
+		};
+
+		watchdog: watchdog@10007000 {
+			compatible = "mediatek,mt6789-wdt", "mediatek,mt6589-wdt";
+			reg = <0x0 0x10007000 0x0 0x100>;
+			bootph-all;
+		};
+
+		apmixedsys: clock-controller@1000c000 {
+			compatible = "mediatek,mt6789-apmixedsys", "syscon";
+			reg = <0x0 0x1000c000 0x0 0x1000>;
+			#clock-cells = <1>;
+			bootph-all;
+		};
+
+		keypad: keypad@10010000 {
+			compatible = "mediatek,mt6789-kpd";
+			reg = <0x0 0x10010000 0x0 0x1000>;
+			status = "disabled";
+		};
+
+		pwrap: pwrap@10026000 {
+			compatible = "mediatek,mt6789-pwrap", "syscon";
+			reg = <0x0 0x10026000 0x0 0x1000>;
+			reg-names = "pwrap";
+			clocks = <&infracfg_ao CLK_IFRAO_PMIC_AP>,
+				 <&infracfg_ao CLK_IFRAO_PMIC_TMR>;
+			clock-names = "spi", "wrap";
+			status = "disabled";
+		};
+
+		uart0: serial@11002000 {
+			compatible = "mediatek,mt6577-uart";
+			reg = <0x0 0x11002000 0x0 0x1000>;
+			clocks = <&clk26m>;
+			bootph-all;
+			status = "disabled";
+		};
+
+		usb0: usb@11200000 {
+			compatible = "mediatek,mt6789-musb", "mediatek,mtk-musb";
+			reg = <0x0 0x11200000 0x0 0x10000>;
+			clocks = <&infracfg_ao CLK_IFRAO_SSUSB>,
+				 <&topckgen CLK_TOP_USB_TOP_SEL>,
+				 <&apmixedsys CLK_APMIXED_USBPLL>;
+			clock-names = "main", "mcu", "univpll";
+			phys = <&u2port0 PHY_TYPE_USB2>;
+			dr_mode = "peripheral";
+			status = "disabled";
+		};
+
+		ufshci: ufshci@11270000 {
+			compatible = "mediatek,mt8183-ufshci";
+			reg = <0x0 0x11270000 0x0 0x2300>;
+			clocks = <&infracfg_ao CLK_IFRAO_UFS>,
+				 <&infracfg_ao CLK_IFRAO_UFS_SAP_BCLK>,
+				 <&infracfg_ao CLK_IFRAO_UNIPRO_TICK>,
+				 <&infracfg_ao CLK_IFRAO_UNIPRO_SYSCLK>,
+				 <&infracfg_ao CLK_IFRAO_UFS_AES>,
+				 <&topckgen CLK_TOP_AES_UFSFDE_SEL>,
+				 <&topckgen CLK_TOP_UFS_SEL>;
+			clock-names = "ufs", "ufs_mp", "unipro_tick",
+				      "unipro_sys", "ufs_aes",
+				      "ufsfde_ck", "ufs_ck";
+			status = "disabled";
+		};
+
+		u2phy0: t-phy@11f40000 {
+			compatible = "mediatek,generic-tphy-v2";
+			#address-cells = <1>;
+			#size-cells = <1>;
+			ranges = <0x0 0x0 0x11f40000 0x1000>;
+			status = "disabled";
+
+			u2port0: usb-phy@0 {
+				reg = <0x0 0x700>;
+				clocks = <&clk26m>;
+				clock-names = "ref";
+				#phy-cells = <1>;
+			};
+		};
+	};
+};

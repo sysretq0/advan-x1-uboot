@@ -1,0 +1,126 @@
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Advan X1 (MediaTek MT6789 / Helio G99) U-Boot Device Tree.
+ *
+ * All memory windows, display geometry, keypad/PMIC mappings, and peripheral
+ * addresses are derived directly from verified Advan X1 stock artifacts
+ * (loki & advan-x1-mainline).
+ */
+
+/dts-v1/;
+
+#include <dt-bindings/input/linux-event-codes.h>
+#include "mt6789.dtsi"
+
+/ {
+	model = "Advan X1";
+	compatible = "advan,x1", "mediatek,mt6789";
+
+	aliases {
+		serial0 = &uart0;
+	};
+
+	chosen {
+		stdout-path = "serial0:921600n8";
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+
+		/*
+		 * Stock LK DSI video-mode framebuffer (Chipone ICNL9922C,
+		 * 1080x2460 visible, 1088px = 4352B stride, 2464 total lines).
+		 * board_fix_fdt() updates reg to the live OVL0_L0_ADDR before
+		 * simplefb probes.
+		 */
+		framebuffer@fe007000 {
+			compatible = "simple-framebuffer";
+			reg = <0x0 0xfe007000 0x0 0x00a3a000>;
+			width = <1080>;
+			height = <2460>;
+			stride = <4352>;
+			format = "a8r8g8b8";
+			status = "okay";
+		};
+	};
+
+	/*
+	 * Verified clean DRAM windows from live /proc/iomem and MT6789 mblock
+	 * reservations:
+	 *   - Bank 0: 0x60000000..0x6EFFFFFF (240 MiB, U-Boot & kernel staging)
+	 *   - Bank 1: 0x140000000..0x2296FFFFF (3.64 GiB clean high RAM)
+	 */
+	memory@60000000 {
+		device_type = "memory";
+		reg = <0x0 0x60000000 0x0 0x0f000000>,
+		      <0x1 0x40000000 0x0 0xe9700000>;
+	};
+
+	reserved-memory {
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+
+		ramoops@48090000 {
+			reg = <0x0 0x48090000 0x0 0x000e0000>;
+			no-map;
+		};
+
+		framebuffer_reserved: framebuffer@fe007000 {
+			reg = <0x0 0xfe007000 0x0 0x01ff9000>;
+			no-map;
+		};
+	};
+
+	pmic_keys: pmic-keys {
+		compatible = "mediatek,mt6366-keys", "mediatek,mt6358-keys";
+		pmic = <&pwrap>;
+
+		button-power {
+			label = "Power";
+			linux,code = <KEY_POWER>;
+			mediatek,status-reg = <0x28>;
+			mediatek,status-bit = <1>;
+		};
+
+		button-volup {
+			label = "Volume Up";
+			linux,code = <KEY_VOLUMEUP>;
+			mediatek,status-reg = <0x28>;
+			mediatek,status-bit = <3>;
+		};
+	};
+};
+
+&uart0 {
+	status = "okay";
+};
+
+&keypad {
+	status = "okay";
+
+	button-voldown {
+		label = "Volume Down";
+		linux,code = <KEY_VOLUMEDOWN>;
+		mediatek,kpd-bit = <0>;
+	};
+};
+
+&pwrap {
+	status = "okay";
+
+	pmic: pmic {
+		compatible = "mediatek,mt6366", "mediatek,mt6358";
+	};
+};
+
+&ufshci {
+	status = "okay";
+};
+
+&u2phy0 {
+	status = "okay";
+};
+
+&usb0 {
+	status = "okay";
+};

@@ -1,0 +1,1126 @@
+From e94d85e241c7ea01e496b9cc72544c9897cd3ad7 Mon Sep 17 00:00:00 2001
+From: sysretq0 <324514544+sysretq0@users.noreply.github.com>
+Date: Sat, 21 Nov 2026 08:18:47 +0000
+Subject: [PATCH 2/6] clk: mediatek: Add MT6789 clock driver and dt-bindings
+
+Change-Id: I62e615651af6e871343c7b875192e9cdb277d67e
+Signed-off-by: sysretq0 <324514544+sysretq0@users.noreply.github.com>
+---
+ drivers/clk/mediatek/Makefile             |   1 +
+ drivers/clk/mediatek/clk-mt6789.c         | 618 ++++++++++++++++++++++
+ include/dt-bindings/clock/mt6789-clk.h    | 444 ++++++++++++++++
+ include/dt-bindings/reset/mt6789-resets.h |  14 +
+ 4 files changed, 1077 insertions(+)
+ create mode 100644 drivers/clk/mediatek/clk-mt6789.c
+ create mode 100644 include/dt-bindings/clock/mt6789-clk.h
+ create mode 100644 include/dt-bindings/reset/mt6789-resets.h
+
+diff --git a/drivers/clk/mediatek/Makefile b/drivers/clk/mediatek/Makefile
+index 00ebb50a..c1170640 100644
+--- a/drivers/clk/mediatek/Makefile
++++ b/drivers/clk/mediatek/Makefile
+@@ -3,6 +3,7 @@
+ obj-$(CONFIG_ARCH_MEDIATEK) += clk-mtk.o
+ 
+ # SoC Drivers
++obj-$(CONFIG_TARGET_MT6789) += clk-mt6789.o
+ obj-$(CONFIG_TARGET_MT7623) += clk-mt7623.o
+ obj-$(CONFIG_TARGET_MT7622) += clk-mt7622.o
+ obj-$(CONFIG_TARGET_MT7629) += clk-mt7629.o
+diff --git a/drivers/clk/mediatek/clk-mt6789.c b/drivers/clk/mediatek/clk-mt6789.c
+new file mode 100644
+index 00000000..72db197c
+--- /dev/null
++++ b/drivers/clk/mediatek/clk-mt6789.c
+@@ -0,0 +1,618 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * MediaTek MT6789 (Helio G99 / MT8781) clock driver.
++ *
++ * Register maps and clock IDs derived from verified MT6789 mainline Linux
++ * clock bindings (apmixedsys, topckgen, infracfg_ao).
++ */
++
++#include <clk-uclass.h>
++#include <dm.h>
++#include <dm/device_compat.h>
++#include <asm/io.h>
++#include <dt-bindings/clock/mt6789-clk.h>
++
++#include "clk-mtk.h"
++
++#define MT6789_PLL_FMAX		(3800UL * MHZ)
++#define MT6789_PLL_FMIN		(1500UL * MHZ)
++
++enum {
++	CLK_PAD_CLK32K,
++	CLK_PAD_CLK26M,
++	CLK_PAD_CLK13M,
++};
++
++static const ulong ext_clock_rates[] = {
++	[CLK_PAD_CLK32K] = 32000,
++	[CLK_PAD_CLK26M] = 26 * MHZ,
++	[CLK_PAD_CLK13M] = 13 * MHZ,
++};
++
++/* ---- APMIXEDSYS (0x1000c000) ---- */
++
++#define PLL(_id, _reg, _pwr_reg, _en_mask, _flags, _pcwbits, _pd_reg,	\
++	    _pd_shift, _pcw_reg, _pcw_shift) {				\
++		.id = _id,						\
++		.reg = _reg,						\
++		.pwr_reg = _pwr_reg,					\
++		.en_mask = _en_mask,					\
++		.rst_bar_mask = BIT(23),				\
++		.fmin = MT6789_PLL_FMIN,				\
++		.fmax = MT6789_PLL_FMAX,				\
++		.flags = _flags,					\
++		.pcwbits = _pcwbits,					\
++		.pcwibits = 8,						\
++		.pd_reg = _pd_reg,					\
++		.pd_shift = _pd_shift,					\
++		.pcw_reg = _pcw_reg,					\
++		.pcw_shift = _pcw_shift,				\
++	}
++
++static const struct mtk_pll_data apmixed_plls[] = {
++	PLL(CLK_APMIXED_ARMPLL_LL, 0x0208, 0x0214, BIT(0), 0,
++	    22, 0x020c, 24, 0x020c, 0),
++	PLL(CLK_APMIXED_ARMPLL_BL0, 0x0218, 0x0224, BIT(0), 0,
++	    22, 0x021c, 24, 0x021c, 0),
++	PLL(CLK_APMIXED_CCIPLL, 0x0258, 0x0264, BIT(0), 0,
++	    22, 0x025c, 24, 0x025c, 0),
++	PLL(CLK_APMIXED_MPLL, 0x0390, 0x039c, BIT(0), 0,
++	    22, 0x0394, 24, 0x0394, 0),
++	PLL(CLK_APMIXED_MAINPLL, 0x0340, 0x034c, 0xff000001,
++	    CLK_PLL_HAVE_RST_BAR, 22, 0x0344, 24, 0x0344, 0),
++	PLL(CLK_APMIXED_UNIVPLL, 0x0308, 0x0314, 0xff000001,
++	    CLK_PLL_HAVE_RST_BAR, 22, 0x030c, 24, 0x030c, 0),
++	PLL(CLK_APMIXED_MSDCPLL, 0x0350, 0x035c, BIT(0), 0,
++	    22, 0x0354, 24, 0x0354, 0),
++	PLL(CLK_APMIXED_MMPLL, 0x0360, 0x036c, 0xff000001,
++	    CLK_PLL_HAVE_RST_BAR, 22, 0x0364, 24, 0x0364, 0),
++	PLL(CLK_APMIXED_NPUPLL, 0x03b4, 0x03c0, 0xff000001, 0,
++	    22, 0x03b8, 24, 0x03b8, 0),
++	PLL(CLK_APMIXED_MFGPLL, 0x0268, 0x0274, BIT(0), 0,
++	    22, 0x026c, 24, 0x026c, 0),
++	PLL(CLK_APMIXED_TVDPLL, 0x0380, 0x038c, BIT(0), 0,
++	    22, 0x0384, 24, 0x0384, 0),
++	PLL(CLK_APMIXED_APLL1, 0x0318, 0x0328, BIT(0), 0,
++	    32, 0x031c, 24, 0x0320, 0),
++	PLL(CLK_APMIXED_APLL2, 0x032c, 0x033c, BIT(0), 0,
++	    32, 0x0330, 24, 0x0334, 0),
++	/* USBPLL enable lives in CON2 (0x03cc) bit 2; PCW/PD live in 0x03c4 */
++	PLL(CLK_APMIXED_USBPLL, 0x03cc, 0x03cc, BIT(2), 0,
++	    22, 0x03c4, 24, 0x03c4, 0),
++};
++
++static const struct mtk_clk_tree mt6789_apmixedsys_clk_tree = {
++	.pll_parent = EXT_PARENT(CLK_PAD_CLK26M),
++	.ext_clk_rates = ext_clock_rates,
++	.num_ext_clks = ARRAY_SIZE(ext_clock_rates),
++	.plls = apmixed_plls,
++	.num_plls = ARRAY_SIZE(apmixed_plls),
++	.type = MTK_CLK_TREE_APMIXED,
++};
++
++/* ---- TOPCKGEN (0x10000000) ---- */
++
++#define FIXED_CLK0(_id, _rate)			\
++	FIXED_CLK(_id, CLK_PAD_CLK26M, CLK_PARENT_EXT, _rate)
++
++static const struct mtk_fixed_clk top_fixed_clks[] = {
++	FIXED_CLK0(CLK_TOP_CLKRTC, 32768),
++	FIXED_CLK0(CLK_TOP_TCK_26M_MX9, 26 * MHZ),
++	FIXED_CLK0(CLK_TOP_F26M_CK_D2, 13 * MHZ),
++	FIXED_CLK0(CLK_TOP_F26M, 26 * MHZ),
++	FIXED_CLK0(CLK_TOP_OSC_D2, 130 * MHZ),
++	FIXED_CLK0(CLK_TOP_OSC_D4, 65 * MHZ),
++	FIXED_CLK0(CLK_TOP_OSC_D8, 32500000),
++	FIXED_CLK0(CLK_TOP_OSC_D10, 26 * MHZ),
++	FIXED_CLK0(CLK_TOP_OSC_D16, 16250000),
++	FIXED_CLK0(CLK_TOP_OSC_D20, 13 * MHZ),
++};
++
++#define FACTOR0(_id, _parent, _mult, _div)	\
++	FACTOR(_id, _parent, _mult, _div, CLK_PARENT_APMIXED)
++
++#define FACTOR1(_id, _parent, _mult, _div)	\
++	FACTOR(_id, _parent, _mult, _div, CLK_PARENT_TOPCKGEN)
++
++static const struct mtk_fixed_factor top_fixed_divs[] = {
++	FACTOR0(CLK_TOP_MFGPLL, CLK_APMIXED_MFGPLL, 1, 1),
++	FACTOR0(CLK_TOP_MAINPLL_D4, CLK_APMIXED_MAINPLL, 1, 4),
++	FACTOR0(CLK_TOP_MAINPLL_D4_D2, CLK_APMIXED_MAINPLL, 1, 8),
++	FACTOR0(CLK_TOP_MAINPLL_D4_D4, CLK_APMIXED_MAINPLL, 1, 16),
++	FACTOR0(CLK_TOP_MAINPLL_D4_D8, CLK_APMIXED_MAINPLL, 1, 32),
++	FACTOR0(CLK_TOP_MAINPLL_D4_D16, CLK_APMIXED_MAINPLL, 1, 64),
++	FACTOR0(CLK_TOP_MAINPLL_D5, CLK_APMIXED_MAINPLL, 1, 5),
++	FACTOR0(CLK_TOP_MAINPLL_D5_D2, CLK_APMIXED_MAINPLL, 1, 10),
++	FACTOR0(CLK_TOP_MAINPLL_D5_D4, CLK_APMIXED_MAINPLL, 1, 20),
++	FACTOR0(CLK_TOP_MAINPLL_D5_D8, CLK_APMIXED_MAINPLL, 1, 40),
++	FACTOR0(CLK_TOP_MAINPLL_D6, CLK_APMIXED_MAINPLL, 1, 6),
++	FACTOR0(CLK_TOP_MAINPLL_D6_D2, CLK_APMIXED_MAINPLL, 1, 12),
++	FACTOR0(CLK_TOP_MAINPLL_D6_D4, CLK_APMIXED_MAINPLL, 1, 24),
++	FACTOR0(CLK_TOP_MAINPLL_D7, CLK_APMIXED_MAINPLL, 1, 7),
++	FACTOR0(CLK_TOP_MAINPLL_D7_D2, CLK_APMIXED_MAINPLL, 1, 14),
++	FACTOR0(CLK_TOP_MAINPLL_D7_D4, CLK_APMIXED_MAINPLL, 1, 28),
++	FACTOR0(CLK_TOP_MAINPLL_D7_D8, CLK_APMIXED_MAINPLL, 1, 56),
++	FACTOR0(CLK_TOP_MAINPLL_D9, CLK_APMIXED_MAINPLL, 1, 9),
++	FACTOR0(CLK_TOP_UNIVPLL_D4, CLK_APMIXED_UNIVPLL, 1, 4),
++	FACTOR0(CLK_TOP_UNIVPLL_D4_D2, CLK_APMIXED_UNIVPLL, 1, 8),
++	FACTOR0(CLK_TOP_UNIVPLL_D4_D4, CLK_APMIXED_UNIVPLL, 1, 16),
++	FACTOR0(CLK_TOP_UNIVPLL_D4_D8, CLK_APMIXED_UNIVPLL, 1, 32),
++	FACTOR0(CLK_TOP_UNIVPLL_D5, CLK_APMIXED_UNIVPLL, 1, 5),
++	FACTOR0(CLK_TOP_UNIVPLL_D5_D2, CLK_APMIXED_UNIVPLL, 1, 10),
++	FACTOR0(CLK_TOP_UNIVPLL_D5_D4, CLK_APMIXED_UNIVPLL, 1, 20),
++	FACTOR0(CLK_TOP_UNIVPLL_D6, CLK_APMIXED_UNIVPLL, 1, 6),
++	FACTOR0(CLK_TOP_UNIVPLL_D6_D2, CLK_APMIXED_UNIVPLL, 1, 12),
++	FACTOR0(CLK_TOP_UNIVPLL_D6_D4, CLK_APMIXED_UNIVPLL, 1, 24),
++	FACTOR0(CLK_TOP_UNIVPLL_D6_D8, CLK_APMIXED_UNIVPLL, 1, 48),
++	FACTOR0(CLK_TOP_UNIVPLL_D6_D16, CLK_APMIXED_UNIVPLL, 1, 96),
++	FACTOR0(CLK_TOP_UNIVPLL_D7, CLK_APMIXED_UNIVPLL, 1, 7),
++	FACTOR0(CLK_TOP_UNIVPLL_192M_D2, CLK_APMIXED_UNIVPLL, 1, 26),
++	FACTOR0(CLK_TOP_UNIVPLL_192M_D4, CLK_APMIXED_UNIVPLL, 1, 52),
++	FACTOR0(CLK_TOP_UNIVPLL_192M_D8, CLK_APMIXED_UNIVPLL, 1, 104),
++	FACTOR0(CLK_TOP_UNIVPLL_192M_D16, CLK_APMIXED_UNIVPLL, 1, 208),
++	FACTOR0(CLK_TOP_UNIVPLL_192M_D32, CLK_APMIXED_UNIVPLL, 1, 416),
++	FACTOR0(CLK_TOP_MMPLL_D4_D2, CLK_APMIXED_MMPLL, 1, 8),
++	FACTOR0(CLK_TOP_MMPLL_D5_D2, CLK_APMIXED_MMPLL, 1, 12),
++	FACTOR0(CLK_TOP_MMPLL_D6, CLK_APMIXED_MMPLL, 1, 6),
++	FACTOR0(CLK_TOP_MMPLL_D6_D2, CLK_APMIXED_MMPLL, 1, 12),
++	FACTOR0(CLK_TOP_MMPLL_D7, CLK_APMIXED_MMPLL, 1, 7),
++	FACTOR0(CLK_TOP_MMPLL_D9, CLK_APMIXED_MMPLL, 1, 9),
++	FACTOR0(CLK_TOP_NPUPLL, CLK_APMIXED_NPUPLL, 1, 1),
++	FACTOR0(CLK_TOP_TVDPLL, CLK_APMIXED_TVDPLL, 1, 1),
++	FACTOR0(CLK_TOP_MSDCPLL, CLK_APMIXED_MSDCPLL, 1, 1),
++	FACTOR0(CLK_TOP_MSDCPLL_D2, CLK_APMIXED_MSDCPLL, 1, 2),
++	FACTOR0(CLK_TOP_MSDCPLL_D4, CLK_APMIXED_MSDCPLL, 1, 4),
++	/* 1:1 mux aliases consumed by infracfg_ao gates */
++	FACTOR1(CLK_TOP_AXI, CLK_TOP_AXI_SEL, 1, 1),
++	FACTOR1(CLK_TOP_DISP, CLK_TOP_DISP_SEL, 1, 1),
++	FACTOR1(CLK_TOP_UART, CLK_TOP_UART_SEL, 1, 1),
++	FACTOR1(CLK_TOP_SPI, CLK_TOP_SPI_SEL, 1, 1),
++	FACTOR1(CLK_TOP_MSDC50_0, CLK_TOP_MSDC50_0_SEL, 1, 1),
++	FACTOR1(CLK_TOP_MSDC30_1, CLK_TOP_MSDC30_1_SEL, 1, 1),
++	FACTOR1(CLK_TOP_PWRAP_ULPOSC, CLK_TOP_PWRAP_ULPOSC_SEL, 1, 1),
++	FACTOR1(CLK_TOP_DISP_PWM, CLK_TOP_DISP_PWM_SEL, 1, 1),
++	FACTOR1(CLK_TOP_USB_TOP, CLK_TOP_USB_TOP_SEL, 1, 1),
++	FACTOR1(CLK_TOP_I2C, CLK_TOP_I2C_SEL, 1, 1),
++	FACTOR1(CLK_TOP_AES_UFSFDE, CLK_TOP_AES_UFSFDE_SEL, 1, 1),
++	FACTOR1(CLK_TOP_UFS, CLK_TOP_UFS_SEL, 1, 1),
++	FACTOR1(CLK_TOP_PWM, CLK_TOP_PWM_SEL, 1, 1),
++	FACTOR1(CLK_TOP_DSI_OCC, CLK_TOP_DSI_OCC_SEL, 1, 1),
++};
++
++static const struct mtk_parent axi_parents[] = {
++	TOP_PARENT(CLK_TOP_TCK_26M_MX9),
++	TOP_PARENT(CLK_TOP_MAINPLL_D4_D4),
++	TOP_PARENT(CLK_TOP_MAINPLL_D7_D2),
++	TOP_PARENT(CLK_TOP_MAINPLL_D4_D2),
++	TOP_PARENT(CLK_TOP_MAINPLL_D5_D2),
++	TOP_PARENT(CLK_TOP_MAINPLL_D6_D2),
++	TOP_PARENT(CLK_TOP_OSC_D4),
++};
++
++static const struct mtk_parent spm_parents[] = {
++	TOP_PARENT(CLK_TOP_TCK_26M_MX9),
++	TOP_PARENT(CLK_TOP_OSC_D10),
++	TOP_PARENT(CLK_TOP_MAINPLL_D7_D4),
++	TOP_PARENT(CLK_TOP_CLKRTC),
++};
++
++static const struct mtk_parent scp_parents[] = {
++	TOP_PARENT(CLK_TOP_TCK_26M_MX9),
++	TOP_PARENT(CLK_TOP_UNIVPLL_D4),
++	TOP_PARENT(CLK_TOP_NPUPLL),
++	TOP_PARENT(CLK_TOP_MAINPLL_D6),
++	TOP_PARENT(CLK_TOP_UNIVPLL_D6),
++	TOP_PARENT(CLK_TOP_MAINPLL_D4_D2),
++	TOP_PARENT(CLK_TOP_MAINPLL_D4),
++	TOP_PARENT(CLK_TOP_MAINPLL_D7),
++};
++
++static const struct mtk_parent disp_parents[] = {
++	TOP_PARENT(CLK_TOP_TCK_26M_MX9),
++	TOP_PARENT(CLK_TOP_UNIVPLL_D6_D2),
++	TOP_PARENT(CLK_TOP_MAINPLL_D5_D2),
++	TOP_PARENT(CLK_TOP_MMPLL_D6_D2),
++	TOP_PARENT(CLK_TOP_UNIVPLL_D5_D2),
++	TOP_PARENT(CLK_TOP_UNIVPLL_D4_D2),
++	TOP_PARENT(CLK_TOP_MMPLL_D7),
++	TOP_PARENT(CLK_TOP_UNIVPLL_D6),
++	TOP_PARENT(CLK_TOP_MAINPLL_D4),
++	TOP_PARENT(CLK_TOP_MMPLL_D5_D2),
++};
++
++static const struct mtk_parent uart_parents[] = {
++	TOP_PARENT(CLK_TOP_TCK_26M_MX9),
++	TOP_PARENT(CLK_TOP_UNIVPLL_D6_D8),
++};
++
++static const struct mtk_parent spi_parents[] = {
++	TOP_PARENT(CLK_TOP_TCK_26M_MX9),
++	TOP_PARENT(CLK_TOP_MAINPLL_D5_D4),
++	TOP_PARENT(CLK_TOP_MAINPLL_D6_D4),
++	TOP_PARENT(CLK_TOP_MSDCPLL_D4),
++	TOP_PARENT(CLK_TOP_MSDCPLL_D2),
++	TOP_PARENT(CLK_TOP_MAINPLL_D6_D2),
++	TOP_PARENT(CLK_TOP_MAINPLL_D4_D4),
++	TOP_PARENT(CLK_TOP_UNIVPLL_D5_D4),
++};
++
++static const struct mtk_parent msdc5hclk_parents[] = {
++	TOP_PARENT(CLK_TOP_TCK_26M_MX9),
++	TOP_PARENT(CLK_TOP_MAINPLL_D4_D2),
++	TOP_PARENT(CLK_TOP_MAINPLL_D6_D2),
++};
++
++static const struct mtk_parent msdc50_0_parents[] = {
++	TOP_PARENT(CLK_TOP_TCK_26M_MX9),
++	TOP_PARENT(CLK_TOP_MSDCPLL),
++	TOP_PARENT(CLK_TOP_MSDCPLL_D2),
++	TOP_PARENT(CLK_TOP_UNIVPLL_D4_D4),
++	TOP_PARENT(CLK_TOP_MAINPLL_D6_D2),
++	TOP_PARENT(CLK_TOP_UNIVPLL_D4_D2),
++};
++
++static const struct mtk_parent msdc30_1_parents[] = {
++	TOP_PARENT(CLK_TOP_TCK_26M_MX9),
++	TOP_PARENT(CLK_TOP_UNIVPLL_D6_D2),
++	TOP_PARENT(CLK_TOP_MAINPLL_D6_D2),
++	TOP_PARENT(CLK_TOP_MAINPLL_D7_D2),
++	TOP_PARENT(CLK_TOP_MSDCPLL_D2),
++};
++
++static const struct mtk_parent pwrap_ulposc_parents[] = {
++	TOP_PARENT(CLK_TOP_OSC_D10),
++	TOP_PARENT(CLK_TOP_TCK_26M_MX9),
++	TOP_PARENT(CLK_TOP_OSC_D4),
++	TOP_PARENT(CLK_TOP_OSC_D8),
++	TOP_PARENT(CLK_TOP_OSC_D16),
++};
++
++static const struct mtk_parent disp_pwm_parents[] = {
++	TOP_PARENT(CLK_TOP_TCK_26M_MX9),
++	TOP_PARENT(CLK_TOP_UNIVPLL_D6_D4),
++	TOP_PARENT(CLK_TOP_OSC_D2),
++	TOP_PARENT(CLK_TOP_OSC_D4),
++	TOP_PARENT(CLK_TOP_OSC_D16),
++};
++
++static const struct mtk_parent usb_parents[] = {
++	TOP_PARENT(CLK_TOP_TCK_26M_MX9),
++	TOP_PARENT(CLK_TOP_UNIVPLL_D5_D4),
++	TOP_PARENT(CLK_TOP_UNIVPLL_D6_D4),
++	TOP_PARENT(CLK_TOP_UNIVPLL_D5_D2),
++};
++
++static const struct mtk_parent i2c_parents[] = {
++	TOP_PARENT(CLK_TOP_TCK_26M_MX9),
++	TOP_PARENT(CLK_TOP_MAINPLL_D4_D8),
++	TOP_PARENT(CLK_TOP_UNIVPLL_D5_D4),
++};
++
++static const struct mtk_parent aes_ufsfde_parents[] = {
++	TOP_PARENT(CLK_TOP_TCK_26M_MX9),
++	TOP_PARENT(CLK_TOP_MAINPLL_D4),
++	TOP_PARENT(CLK_TOP_MAINPLL_D4_D2),
++	TOP_PARENT(CLK_TOP_MAINPLL_D6),
++	TOP_PARENT(CLK_TOP_MAINPLL_D4_D4),
++	TOP_PARENT(CLK_TOP_UNIVPLL_D4_D2),
++	TOP_PARENT(CLK_TOP_UNIVPLL_D6),
++};
++
++static const struct mtk_parent ufs_parents[] = {
++	TOP_PARENT(CLK_TOP_TCK_26M_MX9),
++	TOP_PARENT(CLK_TOP_MAINPLL_D4_D4),
++	TOP_PARENT(CLK_TOP_MAINPLL_D4_D8),
++	TOP_PARENT(CLK_TOP_UNIVPLL_D4_D4),
++	TOP_PARENT(CLK_TOP_MAINPLL_D6_D2),
++	TOP_PARENT(CLK_TOP_MAINPLL_D5_D2),
++	TOP_PARENT(CLK_TOP_MSDCPLL_D2),
++};
++
++static const struct mtk_parent pwm_parents[] = {
++	TOP_PARENT(CLK_TOP_TCK_26M_MX9),
++	TOP_PARENT(CLK_TOP_UNIVPLL_D4_D8),
++};
++
++static const struct mtk_parent dsi_occ_parents[] = {
++	TOP_PARENT(CLK_TOP_TCK_26M_MX9),
++	TOP_PARENT(CLK_TOP_MAINPLL_D6_D2),
++	TOP_PARENT(CLK_TOP_UNIVPLL_D5_D2),
++	TOP_PARENT(CLK_TOP_UNIVPLL_D4_D2),
++};
++
++#define TOP_MUX(_id, _parents, _mux, _set, _clr, _shift, _width, _gate, _upd_reg, _upd) \
++	MUX_CLR_SET_UPD_FLAGS(_id, _parents, _mux, _set, _clr, _shift, _width, _gate, \
++			      _upd_reg, _upd, CLK_MUX_SETCLR_UPD)
++
++static const struct mtk_composite top_muxes[] = {
++	TOP_MUX(CLK_TOP_AXI_SEL, axi_parents,
++		0x0010, 0x0014, 0x0018, 0, 3, -1, 0x0004, 0),
++	TOP_MUX(CLK_TOP_SPM_SEL, spm_parents,
++		0x0010, 0x0014, 0x0018, 8, 2, -1, 0x0004, 1),
++	TOP_MUX(CLK_TOP_SCP_SEL, scp_parents,
++		0x0010, 0x0014, 0x0018, 16, 3, 23, 0x0004, 2),
++	TOP_MUX(CLK_TOP_DISP_SEL, disp_parents,
++		0x0020, 0x0024, 0x0028, 0, 4, 7, 0x0004, 4),
++	TOP_MUX(CLK_TOP_UART_SEL, uart_parents,
++		0x0070, 0x0074, 0x0078, 8, 1, 15, 0x0004, 25),
++	TOP_MUX(CLK_TOP_SPI_SEL, spi_parents,
++		0x0070, 0x0074, 0x0078, 16, 3, 23, 0x0004, 26),
++	TOP_MUX(CLK_TOP_MSDC50_0_HCLK_SEL, msdc5hclk_parents,
++		0x0070, 0x0074, 0x0078, 24, 2, 31, 0x0004, 27),
++	TOP_MUX(CLK_TOP_MSDC50_0_SEL, msdc50_0_parents,
++		0x0080, 0x0084, 0x0088, 0, 3, 7, 0x0004, 28),
++	TOP_MUX(CLK_TOP_MSDC30_1_SEL, msdc30_1_parents,
++		0x0080, 0x0084, 0x0088, 8, 3, 15, 0x0004, 29),
++	TOP_MUX(CLK_TOP_PWRAP_ULPOSC_SEL, pwrap_ulposc_parents,
++		0x0090, 0x0094, 0x0098, 8, 3, 15, 0x0008, 2),
++	TOP_MUX(CLK_TOP_DISP_PWM_SEL, disp_pwm_parents,
++		0x00a0, 0x00a4, 0x00a8, 16, 3, 23, 0x0008, 7),
++	TOP_MUX(CLK_TOP_USB_TOP_SEL, usb_parents,
++		0x00a0, 0x00a4, 0x00a8, 24, 2, 31, 0x0008, 8),
++	TOP_MUX(CLK_TOP_I2C_SEL, i2c_parents,
++		0x00b0, 0x00b4, 0x00b8, 8, 2, 15, 0x0008, 10),
++	TOP_MUX(CLK_TOP_AES_UFSFDE_SEL, aes_ufsfde_parents,
++		0x00d0, 0x00d4, 0x00d8, 16, 3, 23, 0x0008, 19),
++	TOP_MUX(CLK_TOP_UFS_SEL, ufs_parents,
++		0x00d0, 0x00d4, 0x00d8, 24, 3, 31, 0x0008, 20),
++	TOP_MUX(CLK_TOP_PWM_SEL, pwm_parents,
++		0x00f0, 0x00f4, 0x00f8, 24, 1, 31, 0x0008, 28),
++	TOP_MUX(CLK_TOP_DSI_OCC_SEL, dsi_occ_parents,
++		0x0110, 0x0114, 0x0118, 16, 2, 23, 0x000c, 4),
++};
++
++static const int mt6789_id_top_offs_map[CLK_TOP_NR_CLK] = {
++	[0 ... CLK_TOP_NR_CLK - 1] = -1,
++	/* FIXED (0..9) */
++	[CLK_TOP_CLKRTC]		= 0,
++	[CLK_TOP_TCK_26M_MX9]		= 1,
++	[CLK_TOP_F26M_CK_D2]		= 2,
++	[CLK_TOP_F26M]			= 3,
++	[CLK_TOP_OSC_D2]		= 4,
++	[CLK_TOP_OSC_D4]		= 5,
++	[CLK_TOP_OSC_D8]		= 6,
++	[CLK_TOP_OSC_D10]		= 7,
++	[CLK_TOP_OSC_D16]		= 8,
++	[CLK_TOP_OSC_D20]		= 9,
++	/* FACTOR (10..70) */
++	[CLK_TOP_MFGPLL]		= 10,
++	[CLK_TOP_MAINPLL_D4]		= 11,
++	[CLK_TOP_MAINPLL_D4_D2]		= 12,
++	[CLK_TOP_MAINPLL_D4_D4]		= 13,
++	[CLK_TOP_MAINPLL_D4_D8]		= 14,
++	[CLK_TOP_MAINPLL_D4_D16]	= 15,
++	[CLK_TOP_MAINPLL_D5]		= 16,
++	[CLK_TOP_MAINPLL_D5_D2]		= 17,
++	[CLK_TOP_MAINPLL_D5_D4]		= 18,
++	[CLK_TOP_MAINPLL_D5_D8]		= 19,
++	[CLK_TOP_MAINPLL_D6]		= 20,
++	[CLK_TOP_MAINPLL_D6_D2]		= 21,
++	[CLK_TOP_MAINPLL_D6_D4]		= 22,
++	[CLK_TOP_MAINPLL_D7]		= 23,
++	[CLK_TOP_MAINPLL_D7_D2]		= 24,
++	[CLK_TOP_MAINPLL_D7_D4]		= 25,
++	[CLK_TOP_MAINPLL_D7_D8]		= 26,
++	[CLK_TOP_MAINPLL_D9]		= 27,
++	[CLK_TOP_UNIVPLL_D4]		= 28,
++	[CLK_TOP_UNIVPLL_D4_D2]		= 29,
++	[CLK_TOP_UNIVPLL_D4_D4]		= 30,
++	[CLK_TOP_UNIVPLL_D4_D8]		= 31,
++	[CLK_TOP_UNIVPLL_D5]		= 32,
++	[CLK_TOP_UNIVPLL_D5_D2]		= 33,
++	[CLK_TOP_UNIVPLL_D5_D4]		= 34,
++	[CLK_TOP_UNIVPLL_D6]		= 35,
++	[CLK_TOP_UNIVPLL_D6_D2]		= 36,
++	[CLK_TOP_UNIVPLL_D6_D4]		= 37,
++	[CLK_TOP_UNIVPLL_D6_D8]		= 38,
++	[CLK_TOP_UNIVPLL_D6_D16]	= 39,
++	[CLK_TOP_UNIVPLL_D7]		= 40,
++	[CLK_TOP_UNIVPLL_192M_D2]	= 41,
++	[CLK_TOP_UNIVPLL_192M_D4]	= 42,
++	[CLK_TOP_UNIVPLL_192M_D8]	= 43,
++	[CLK_TOP_UNIVPLL_192M_D16]	= 44,
++	[CLK_TOP_UNIVPLL_192M_D32]	= 45,
++	[CLK_TOP_MMPLL_D4_D2]		= 46,
++	[CLK_TOP_MMPLL_D5_D2]		= 47,
++	[CLK_TOP_MMPLL_D6]		= 48,
++	[CLK_TOP_MMPLL_D6_D2]		= 49,
++	[CLK_TOP_MMPLL_D7]		= 50,
++	[CLK_TOP_MMPLL_D9]		= 51,
++	[CLK_TOP_NPUPLL]		= 52,
++	[CLK_TOP_TVDPLL]		= 53,
++	[CLK_TOP_MSDCPLL]		= 54,
++	[CLK_TOP_MSDCPLL_D2]		= 55,
++	[CLK_TOP_MSDCPLL_D4]		= 56,
++	[CLK_TOP_AXI]			= 57,
++	[CLK_TOP_DISP]			= 58,
++	[CLK_TOP_UART]			= 59,
++	[CLK_TOP_SPI]			= 60,
++	[CLK_TOP_MSDC50_0]		= 61,
++	[CLK_TOP_MSDC30_1]		= 62,
++	[CLK_TOP_PWRAP_ULPOSC]		= 63,
++	[CLK_TOP_DISP_PWM]		= 64,
++	[CLK_TOP_USB_TOP]		= 65,
++	[CLK_TOP_I2C]			= 66,
++	[CLK_TOP_AES_UFSFDE]		= 67,
++	[CLK_TOP_UFS]			= 68,
++	[CLK_TOP_PWM]			= 69,
++	[CLK_TOP_DSI_OCC]		= 70,
++	/* MUXES (71..87) */
++	[CLK_TOP_AXI_SEL]		= 71,
++	[CLK_TOP_SPM_SEL]		= 72,
++	[CLK_TOP_SCP_SEL]		= 73,
++	[CLK_TOP_DISP_SEL]		= 74,
++	[CLK_TOP_UART_SEL]		= 75,
++	[CLK_TOP_SPI_SEL]		= 76,
++	[CLK_TOP_MSDC50_0_HCLK_SEL]	= 77,
++	[CLK_TOP_MSDC50_0_SEL]		= 78,
++	[CLK_TOP_MSDC30_1_SEL]		= 79,
++	[CLK_TOP_PWRAP_ULPOSC_SEL]	= 80,
++	[CLK_TOP_DISP_PWM_SEL]		= 81,
++	[CLK_TOP_USB_TOP_SEL]		= 82,
++	[CLK_TOP_I2C_SEL]		= 83,
++	[CLK_TOP_AES_UFSFDE_SEL]	= 84,
++	[CLK_TOP_UFS_SEL]		= 85,
++	[CLK_TOP_PWM_SEL]		= 86,
++	[CLK_TOP_DSI_OCC_SEL]		= 87,
++};
++
++static const struct mtk_clk_tree mt6789_topckgen_clk_tree = {
++	.ext_clk_rates = ext_clock_rates,
++	.num_ext_clks = ARRAY_SIZE(ext_clock_rates),
++	.id_offs_map = mt6789_id_top_offs_map,
++	.id_offs_map_size = ARRAY_SIZE(mt6789_id_top_offs_map),
++	.fdivs_offs = 10,
++	.muxes_offs = 71,
++	.fclks = top_fixed_clks,
++	.fdivs = top_fixed_divs,
++	.muxes = top_muxes,
++	.num_fclks = ARRAY_SIZE(top_fixed_clks),
++	.num_fdivs = ARRAY_SIZE(top_fixed_divs),
++	.num_muxes = ARRAY_SIZE(top_muxes),
++	.type = MTK_CLK_TREE_TOPCKGEN,
++};
++
++/* ---- INFRACFG_AO (0x10001000) ---- */
++
++static const struct mtk_gate_regs ifrao0_cg_regs = {
++	.set_ofs = 0x80,
++	.clr_ofs = 0x84,
++	.sta_ofs = 0x90,
++};
++
++static const struct mtk_gate_regs ifrao1_cg_regs = {
++	.set_ofs = 0x88,
++	.clr_ofs = 0x8c,
++	.sta_ofs = 0x94,
++};
++
++static const struct mtk_gate_regs ifrao2_cg_regs = {
++	.set_ofs = 0xa4,
++	.clr_ofs = 0xa8,
++	.sta_ofs = 0xac,
++};
++
++static const struct mtk_gate_regs ifrao3_cg_regs = {
++	.set_ofs = 0xc0,
++	.clr_ofs = 0xc4,
++	.sta_ofs = 0xc8,
++};
++
++static const struct mtk_gate_regs ifrao4_cg_regs = {
++	.set_ofs = 0xe0,
++	.clr_ofs = 0xe4,
++	.sta_ofs = 0xe8,
++};
++
++static const struct mtk_gate_regs ifrao5_cg_regs = {
++	.set_ofs = 0xd0,
++	.clr_ofs = 0xd4,
++	.sta_ofs = 0xd8,
++};
++
++#define GATE_IFRAO(_id, _parent, _regs, _shift) {		\
++		.id = _id,					\
++		.parent = _parent,				\
++		.regs = &_regs,					\
++		.shift = _shift,				\
++		.flags = CLK_GATE_SETCLR | CLK_PARENT_TOPCKGEN,	\
++	}
++
++static const struct mtk_gate ifrao_clks[] = {
++	/* IFRAO0 */
++	GATE_IFRAO(CLK_IFRAO_PMIC_TMR, CLK_TOP_PWRAP_ULPOSC, ifrao0_cg_regs, 0),
++	GATE_IFRAO(CLK_IFRAO_PMIC_AP, CLK_TOP_PWRAP_ULPOSC, ifrao0_cg_regs, 1),
++	GATE_IFRAO(CLK_IFRAO_GCE, CLK_TOP_AXI, ifrao0_cg_regs, 8),
++	GATE_IFRAO(CLK_IFRAO_GCE2, CLK_TOP_AXI, ifrao0_cg_regs, 9),
++	GATE_IFRAO(CLK_IFRAO_THERM, CLK_TOP_AXI, ifrao0_cg_regs, 10),
++	GATE_IFRAO(CLK_IFRAO_I2C_PSEUDO, CLK_TOP_I2C, ifrao0_cg_regs, 11),
++	GATE_IFRAO(CLK_IFRAO_APDMA_PSEUDO, CLK_TOP_AXI, ifrao0_cg_regs, 12),
++	GATE_IFRAO(CLK_IFRAO_PWM_HCLK, CLK_TOP_AXI, ifrao0_cg_regs, 15),
++	GATE_IFRAO(CLK_IFRAO_PWM1, CLK_TOP_PWM, ifrao0_cg_regs, 16),
++	GATE_IFRAO(CLK_IFRAO_PWM2, CLK_TOP_PWM, ifrao0_cg_regs, 17),
++	GATE_IFRAO(CLK_IFRAO_PWM3, CLK_TOP_PWM, ifrao0_cg_regs, 18),
++	GATE_IFRAO(CLK_IFRAO_PWM4, CLK_TOP_PWM, ifrao0_cg_regs, 19),
++	GATE_IFRAO(CLK_IFRAO_PWM, CLK_TOP_PWM, ifrao0_cg_regs, 21),
++	GATE_IFRAO(CLK_IFRAO_UART0, CLK_TOP_UART, ifrao0_cg_regs, 22),
++	GATE_IFRAO(CLK_IFRAO_UART1, CLK_TOP_UART, ifrao0_cg_regs, 23),
++	GATE_IFRAO(CLK_IFRAO_UART2, CLK_TOP_UART, ifrao0_cg_regs, 24),
++	GATE_IFRAO(CLK_IFRAO_UART3, CLK_TOP_UART, ifrao0_cg_regs, 25),
++	GATE_IFRAO(CLK_IFRAO_GCE_26M, CLK_TOP_AXI, ifrao0_cg_regs, 27),
++	GATE_IFRAO(CLK_IFRAO_BTIF, CLK_TOP_AXI, ifrao0_cg_regs, 31),
++	/* IFRAO1 */
++	GATE_IFRAO(CLK_IFRAO_SPI0, CLK_TOP_SPI, ifrao1_cg_regs, 1),
++	GATE_IFRAO(CLK_IFRAO_MSDC0, CLK_TOP_AXI, ifrao1_cg_regs, 2),
++	GATE_IFRAO(CLK_IFRAO_MSDC1, CLK_TOP_AXI, ifrao1_cg_regs, 4),
++	GATE_IFRAO(CLK_IFRAO_MSDC0_SRC, CLK_TOP_MSDC50_0, ifrao1_cg_regs, 6),
++	GATE_IFRAO(CLK_IFRAO_AUXADC, CLK_TOP_F26M, ifrao1_cg_regs, 10),
++	GATE_IFRAO(CLK_IFRAO_CPUM, CLK_TOP_AXI, ifrao1_cg_regs, 11),
++	GATE_IFRAO(CLK_IFRAO_CCIF1_AP, CLK_TOP_AXI, ifrao1_cg_regs, 12),
++	GATE_IFRAO(CLK_IFRAO_CCIF1_MD, CLK_TOP_AXI, ifrao1_cg_regs, 13),
++	GATE_IFRAO(CLK_IFRAO_AUXADC_MD, CLK_TOP_F26M, ifrao1_cg_regs, 14),
++	GATE_IFRAO(CLK_IFRAO_MSDC1_SRC, CLK_TOP_MSDC30_1, ifrao1_cg_regs, 16),
++	GATE_IFRAO(CLK_IFRAO_MSDC0_AES, CLK_TOP_MSDC50_0, ifrao1_cg_regs, 17),
++	GATE_IFRAO(CLK_IFRAO_CCIF_AP, CLK_TOP_AXI, ifrao1_cg_regs, 23),
++	GATE_IFRAO(CLK_IFRAO_DEBUGSYS, CLK_TOP_AXI, ifrao1_cg_regs, 24),
++	GATE_IFRAO(CLK_IFRAO_AUDIO, CLK_TOP_AXI, ifrao1_cg_regs, 25),
++	GATE_IFRAO(CLK_IFRAO_CCIF_MD, CLK_TOP_AXI, ifrao1_cg_regs, 26),
++	/* IFRAO2 */
++	GATE_IFRAO(CLK_IFRAO_SSUSB, CLK_TOP_USB_TOP, ifrao2_cg_regs, 1),
++	GATE_IFRAO(CLK_IFRAO_DISP_PWM, CLK_TOP_DISP_PWM, ifrao2_cg_regs, 2),
++	GATE_IFRAO(CLK_IFRAO_CLDMA_BCLK, CLK_TOP_AXI, ifrao2_cg_regs, 3),
++	GATE_IFRAO(CLK_IFRAO_AUDIO_26M_BCLK, CLK_TOP_F26M, ifrao2_cg_regs, 4),
++	GATE_IFRAO(CLK_IFRAO_SPI1, CLK_TOP_SPI, ifrao2_cg_regs, 6),
++	GATE_IFRAO(CLK_IFRAO_SPI2, CLK_TOP_SPI, ifrao2_cg_regs, 9),
++	GATE_IFRAO(CLK_IFRAO_SPI3, CLK_TOP_SPI, ifrao2_cg_regs, 10),
++	GATE_IFRAO(CLK_IFRAO_UNIPRO_SYSCLK, CLK_TOP_UFS, ifrao2_cg_regs, 11),
++	GATE_IFRAO(CLK_IFRAO_UNIPRO_TICK, CLK_TOP_F26M, ifrao2_cg_regs, 12),
++	GATE_IFRAO(CLK_IFRAO_UFS_SAP_BCLK, CLK_TOP_F26M, ifrao2_cg_regs, 13),
++	GATE_IFRAO(CLK_IFRAO_SPI4, CLK_TOP_SPI, ifrao2_cg_regs, 25),
++	GATE_IFRAO(CLK_IFRAO_SPI5, CLK_TOP_SPI, ifrao2_cg_regs, 26),
++	GATE_IFRAO(CLK_IFRAO_CQ_DMA, CLK_TOP_AXI, ifrao2_cg_regs, 27),
++	GATE_IFRAO(CLK_IFRAO_UFS, CLK_TOP_UFS, ifrao2_cg_regs, 28),
++	GATE_IFRAO(CLK_IFRAO_UFS_AES, CLK_TOP_AES_UFSFDE, ifrao2_cg_regs, 29),
++	/* IFRAO3 */
++	GATE_IFRAO(CLK_IFRAO_AP_MSDC0, CLK_TOP_MSDC50_0, ifrao3_cg_regs, 7),
++	GATE_IFRAO(CLK_IFRAO_MD_MSDC0, CLK_TOP_MSDC50_0, ifrao3_cg_regs, 8),
++	GATE_IFRAO(CLK_IFRAO_CCIF5_MD, CLK_TOP_AXI, ifrao3_cg_regs, 10),
++	GATE_IFRAO(CLK_IFRAO_CCIF2_AP, CLK_TOP_AXI, ifrao3_cg_regs, 16),
++	GATE_IFRAO(CLK_IFRAO_CCIF2_MD, CLK_TOP_AXI, ifrao3_cg_regs, 17),
++	GATE_IFRAO(CLK_IFRAO_FBIST2FPC, CLK_TOP_MSDC50_0, ifrao3_cg_regs, 24),
++	GATE_IFRAO(CLK_IFRAO_DPMAIF_MAIN, CLK_TOP_AXI, ifrao3_cg_regs, 26),
++	GATE_IFRAO(CLK_IFRAO_CCIF4_AP, CLK_TOP_AXI, ifrao3_cg_regs, 28),
++	GATE_IFRAO(CLK_IFRAO_CCIF4_MD, CLK_TOP_AXI, ifrao3_cg_regs, 29),
++	GATE_IFRAO(CLK_IFRAO_SPI6_CK, CLK_TOP_SPI, ifrao3_cg_regs, 30),
++	GATE_IFRAO(CLK_IFRAO_SPI7_CK, CLK_TOP_SPI, ifrao3_cg_regs, 31),
++	/* IFRAO4 */
++	GATE_IFRAO(CLK_IFRAO_66MP_BUS_MCLK_CKP, CLK_TOP_AXI, ifrao4_cg_regs, 2),
++	/* IFRAO5 */
++	GATE_IFRAO(CLK_IFRAO_AP_DMA, CLK_TOP_AXI, ifrao5_cg_regs, 31),
++};
++
++MTK_GATE_CLK_TREE(ext_clock_rates, mt6789_infracfg_ao_clk_tree, ifrao_clks);
++
++static const struct udevice_id mt6789_clk_compat[] = {
++	{
++		.compatible = "mediatek,mt6789-apmixedsys",
++		.data = (ulong)&mt6789_apmixedsys_clk_tree,
++	},
++	{
++		.compatible = "mediatek,mt6789-topckgen",
++		.data = (ulong)&mt6789_topckgen_clk_tree,
++	},
++	{
++		.compatible = "mediatek,mt6789-infracfg_ao",
++		.data = (ulong)&mt6789_infracfg_ao_clk_tree,
++	},
++	{ }
++};
++
++U_BOOT_DRIVER(mt6789_clk) = {
++	.name = "mt6789-clk",
++	.id = UCLASS_CLK,
++	.of_match = mt6789_clk_compat,
++	.probe = mtk_clk_probe,
++	.priv_auto = sizeof(struct mtk_clk_priv),
++	.ops = &mtk_clk_ops,
++	.flags = DM_FLAG_PRE_RELOC,
++};
+diff --git a/include/dt-bindings/clock/mt6789-clk.h b/include/dt-bindings/clock/mt6789-clk.h
+new file mode 100644
+index 00000000..17871f14
+--- /dev/null
++++ b/include/dt-bindings/clock/mt6789-clk.h
+@@ -0,0 +1,444 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++/*
++ * Copyright (c) 2022 MediaTek Inc.
++ * Author: Owen Chen <owen.chen@mediatek.com>
++ */
++
++#ifndef __DT_BINDINGS_CLOCK_MT6789_CLK_H
++#define __DT_BINDINGS_CLOCK_MT6789_CLK_H
++
++/* TOPCKGEN */
++
++#define CLK_TOP_AXI_SEL					0
++#define CLK_TOP_SPM_SEL					1
++#define CLK_TOP_SCP_SEL					2
++#define CLK_TOP_BUS_AXIMEM_SEL				3
++#define CLK_TOP_DISP_SEL				4
++#define CLK_TOP_MDP_SEL					5
++#define CLK_TOP_IMG1_SEL				6
++#define CLK_TOP_IPE_SEL					7
++#define CLK_TOP_CAM_SEL					8
++#define CLK_TOP_MFG_REF_SEL				9
++#define CLK_TOP_MFG_PLL_SEL				10
++#define CLK_TOP_CAMTG_SEL				11
++#define CLK_TOP_CAMTG2_SEL				12
++#define CLK_TOP_CAMTG3_SEL				13
++#define CLK_TOP_CAMTG4_SEL				14
++#define CLK_TOP_CAMTG5_SEL				15
++#define CLK_TOP_CAMTG6_SEL				16
++#define CLK_TOP_UART_SEL				17
++#define CLK_TOP_SPI_SEL					18
++#define CLK_TOP_MSDC50_0_HCLK_SEL			19
++#define CLK_TOP_MSDC50_0_SEL				20
++#define CLK_TOP_MSDC30_1_SEL				21
++#define CLK_TOP_AUDIO_SEL				22
++#define CLK_TOP_AUD_INTBUS_SEL				23
++#define CLK_TOP_PWRAP_ULPOSC_SEL			24
++#define CLK_TOP_ATB_SEL					25
++#define CLK_TOP_SSPM_SEL				26
++#define CLK_TOP_SCAM_SEL				27
++#define CLK_TOP_DISP_PWM_SEL				28
++#define CLK_TOP_USB_TOP_SEL				29
++#define CLK_TOP_I2C_SEL					30
++#define CLK_TOP_SENINF_SEL				31
++#define CLK_TOP_SENINF1_SEL				32
++#define CLK_TOP_SENINF2_SEL				33
++#define CLK_TOP_SENINF3_SEL				34
++#define CLK_TOP_DXCC_SEL				35
++#define CLK_TOP_AUD_ENGEN1_SEL				36
++#define CLK_TOP_AUD_ENGEN2_SEL				37
++#define CLK_TOP_AES_UFSFDE_SEL				38
++#define CLK_TOP_UFS_SEL					39
++#define CLK_TOP_AUD_1_SEL				40
++#define CLK_TOP_AUD_2_SEL				41
++#define CLK_TOP_DPMAIF_MAIN_SEL				42
++#define CLK_TOP_VENC_SEL				43
++#define CLK_TOP_VDEC_SEL				44
++#define CLK_TOP_CAMTM_SEL				45
++#define CLK_TOP_PWM_SEL					46
++#define CLK_TOP_AUDIO_H_SEL				47
++#define CLK_TOP_SPMI_MST_SEL				48
++#define CLK_TOP_DVFSRC_SEL				49
++#define CLK_TOP_AES_MSDCFDE_SEL				50
++#define CLK_TOP_MCUPM_SEL				51
++#define CLK_TOP_DSI_OCC_SEL				52
++#define CLK_TOP_APLL_I2S0_MCK_SEL			53
++#define CLK_TOP_APLL_I2S1_MCK_SEL			54
++#define CLK_TOP_APLL_I2S2_MCK_SEL			55
++#define CLK_TOP_APLL_I2S3_MCK_SEL			56
++#define CLK_TOP_APLL_I2S4_MCK_SEL			57
++#define CLK_TOP_APLL_I2S5_MCK_SEL			58
++#define CLK_TOP_APLL_I2S6_MCK_SEL			59
++#define CLK_TOP_APLL_I2S7_MCK_SEL			60
++#define CLK_TOP_APLL_I2S8_MCK_SEL			61
++#define CLK_TOP_APLL_I2S9_MCK_SEL			62
++#define CLK_TOP_APLL12_CK_DIV0				63
++#define CLK_TOP_APLL12_CK_DIV1				64
++#define CLK_TOP_APLL12_CK_DIV2				65
++#define CLK_TOP_APLL12_CK_DIV3				66
++#define CLK_TOP_APLL12_CK_DIV4				67
++#define CLK_TOP_APLL12_CK_DIVB				68
++#define CLK_TOP_APLL12_CK_DIV5				69
++#define CLK_TOP_APLL12_CK_DIV6				70
++#define CLK_TOP_APLL12_CK_DIV7				71
++#define CLK_TOP_APLL12_CK_DIV8				72
++#define CLK_TOP_APLL12_CK_DIV9				73
++#define CLK_TOP_MFGPLL					74
++#define CLK_TOP_MAINPLL_D4				75
++#define CLK_TOP_MAINPLL_D4_D2				76
++#define CLK_TOP_MAINPLL_D4_D4				77
++#define CLK_TOP_MAINPLL_D4_D8				78
++#define CLK_TOP_MAINPLL_D4_D16				79
++#define CLK_TOP_MAINPLL_D5				80
++#define CLK_TOP_MAINPLL_D5_D2				81
++#define CLK_TOP_MAINPLL_D5_D4				82
++#define CLK_TOP_MAINPLL_D5_D8				83
++#define CLK_TOP_MAINPLL_D6				84
++#define CLK_TOP_MAINPLL_D6_D2				85
++#define CLK_TOP_MAINPLL_D6_D4				86
++#define CLK_TOP_MAINPLL_D7				87
++#define CLK_TOP_MAINPLL_D7_D2				88
++#define CLK_TOP_MAINPLL_D7_D4				89
++#define CLK_TOP_MAINPLL_D7_D8				90
++#define CLK_TOP_MAINPLL_D9				91
++#define CLK_TOP_UNIVPLL_D4				92
++#define CLK_TOP_UNIVPLL_D4_D2				93
++#define CLK_TOP_UNIVPLL_D4_D4				94
++#define CLK_TOP_UNIVPLL_D4_D8				95
++#define CLK_TOP_UNIVPLL_D5				96
++#define CLK_TOP_UNIVPLL_D5_D2				97
++#define CLK_TOP_UNIVPLL_D5_D4				98
++#define CLK_TOP_UNIVPLL_D6				99
++#define CLK_TOP_UNIVPLL_D6_D2				100
++#define CLK_TOP_UNIVPLL_D6_D4				101
++#define CLK_TOP_UNIVPLL_D6_D8				102
++#define CLK_TOP_UNIVPLL_D6_D16				103
++#define CLK_TOP_UNIVPLL_D7				104
++#define CLK_TOP_UNIVPLL_192M_D2				105
++#define CLK_TOP_UNIVPLL_192M_D4				106
++#define CLK_TOP_UNIVPLL_192M_D8				107
++#define CLK_TOP_UNIVPLL_192M_D16			108
++#define CLK_TOP_UNIVPLL_192M_D32			109
++#define CLK_TOP_APLL1					110
++#define CLK_TOP_APLL1_D2				111
++#define CLK_TOP_APLL1_D4				112
++#define CLK_TOP_APLL1_D8				113
++#define CLK_TOP_APLL2					114
++#define CLK_TOP_APLL2_D2				115
++#define CLK_TOP_APLL2_D4				116
++#define CLK_TOP_APLL2_D8				117
++#define CLK_TOP_MMPLL_D4_D2				118
++#define CLK_TOP_MMPLL_D5_D2				119
++#define CLK_TOP_MMPLL_D6				120
++#define CLK_TOP_MMPLL_D6_D2				121
++#define CLK_TOP_MMPLL_D7				122
++#define CLK_TOP_MMPLL_D9				123
++#define CLK_TOP_NPUPLL					124
++#define CLK_TOP_TVDPLL					125
++#define CLK_TOP_MSDCPLL					126
++#define CLK_TOP_MSDCPLL_D2				127
++#define CLK_TOP_MSDCPLL_D4				128
++#define CLK_TOP_CLKRTC					129
++#define CLK_TOP_TCK_26M_MX9				130
++#define CLK_TOP_F26M_CK_D2				131
++#define CLK_TOP_OSC_D2					132
++#define CLK_TOP_OSC_D4					133
++#define CLK_TOP_OSC_D8					134
++#define CLK_TOP_OSC_D16					135
++#define CLK_TOP_OSC_D10					136
++#define CLK_TOP_OSC_D20					137
++#define CLK_TOP_F26M					138
++#define CLK_TOP_AXI					139
++#define CLK_TOP_DISP					140
++#define CLK_TOP_MDP					141
++#define CLK_TOP_IMG1					142
++#define CLK_TOP_IPE					143
++#define CLK_TOP_CAM					144
++#define CLK_TOP_MFG_REF					145
++#define CLK_TOP_MFG_PLL					146
++#define CLK_TOP_UART					147
++#define CLK_TOP_SPI					148
++#define CLK_TOP_MSDC50_0				149
++#define CLK_TOP_MSDC30_1				150
++#define CLK_TOP_AUDIO					151
++#define CLK_TOP_PWRAP_ULPOSC				152
++#define CLK_TOP_DISP_PWM				153
++#define CLK_TOP_USB_TOP					154
++#define CLK_TOP_I2C					155
++#define CLK_TOP_AUD_ENGEN1				156
++#define CLK_TOP_AUD_ENGEN2				157
++#define CLK_TOP_AES_UFSFDE				158
++#define CLK_TOP_UFS					159
++#define CLK_TOP_DPMAIF_MAIN				160
++#define CLK_TOP_VENC					161
++#define CLK_TOP_VDEC					162
++#define CLK_TOP_CAMTM					163
++#define CLK_TOP_PWM					164
++#define CLK_TOP_AUDIO_H					165
++#define CLK_TOP_DSI_OCC					166
++#define CLK_TOP_I2C_PSEUDO				167
++#define CLK_TOP_APDMA					168
++#define CLK_TOP_NR_CLK					169
++
++/* INFRACFG_AO */
++
++#define CLK_IFRAO_PMIC_TMR				0
++#define CLK_IFRAO_PMIC_AP				1
++#define CLK_IFRAO_GCE					2
++#define CLK_IFRAO_GCE2					3
++#define CLK_IFRAO_THERM					4
++#define CLK_IFRAO_I2C_PSEUDO				5
++#define CLK_IFRAO_APDMA_PSEUDO				6
++#define CLK_IFRAO_PWM_HCLK				7
++#define CLK_IFRAO_PWM1					8
++#define CLK_IFRAO_PWM2					9
++#define CLK_IFRAO_PWM3					10
++#define CLK_IFRAO_PWM4					11
++#define CLK_IFRAO_PWM					12
++#define CLK_IFRAO_UART0					13
++#define CLK_IFRAO_UART1					14
++#define CLK_IFRAO_UART2					15
++#define CLK_IFRAO_UART3					16
++#define CLK_IFRAO_GCE_26M				17
++#define CLK_IFRAO_BTIF					18
++#define CLK_IFRAO_SPI0					19
++#define CLK_IFRAO_MSDC0					20
++#define CLK_IFRAO_MSDC1					21
++#define CLK_IFRAO_MSDC0_SRC				22
++#define CLK_IFRAO_AUXADC				23
++#define CLK_IFRAO_CPUM					24
++#define CLK_IFRAO_CCIF1_AP				25
++#define CLK_IFRAO_CCIF1_MD				26
++#define CLK_IFRAO_AUXADC_MD				27
++#define CLK_IFRAO_MSDC1_SRC				28
++#define CLK_IFRAO_MSDC0_AES				29
++#define CLK_IFRAO_CCIF_AP				30
++#define CLK_IFRAO_DEBUGSYS				31
++#define CLK_IFRAO_AUDIO					32
++#define CLK_IFRAO_CCIF_MD				33
++#define CLK_IFRAO_SSUSB					34
++#define CLK_IFRAO_DISP_PWM				35
++#define CLK_IFRAO_CLDMA_BCLK				36
++#define CLK_IFRAO_AUDIO_26M_BCLK			37
++#define CLK_IFRAO_SPI1					38
++#define CLK_IFRAO_SPI2					39
++#define CLK_IFRAO_SPI3					40
++#define CLK_IFRAO_UNIPRO_SYSCLK				41
++#define CLK_IFRAO_UNIPRO_TICK				42
++#define CLK_IFRAO_UFS_SAP_BCLK				43
++#define CLK_IFRAO_SPI4					44
++#define CLK_IFRAO_SPI5					45
++#define CLK_IFRAO_CQ_DMA				46
++#define CLK_IFRAO_UFS					47
++#define CLK_IFRAO_UFS_AES				48
++#define CLK_IFRAO_AP_MSDC0				49
++#define CLK_IFRAO_MD_MSDC0				50
++#define CLK_IFRAO_CCIF5_MD				51
++#define CLK_IFRAO_CCIF2_AP				52
++#define CLK_IFRAO_CCIF2_MD				53
++#define CLK_IFRAO_FBIST2FPC				54
++#define CLK_IFRAO_DPMAIF_MAIN				55
++#define CLK_IFRAO_CCIF4_AP				56
++#define CLK_IFRAO_CCIF4_MD				57
++#define CLK_IFRAO_SPI6_CK				58
++#define CLK_IFRAO_SPI7_CK				59
++#define CLK_IFRAO_66MP_BUS_MCLK_CKP			60
++#define CLK_IFRAO_AP_DMA				61
++#define CLK_IFRAO_NR_CLK				62
++
++/* APMIXEDSYS */
++
++#define CLK_APMIXED_ARMPLL_LL				0
++#define CLK_APMIXED_ARMPLL_BL0				1
++#define CLK_APMIXED_CCIPLL				2
++#define CLK_APMIXED_MPLL				3
++#define CLK_APMIXED_MAINPLL				4
++#define CLK_APMIXED_UNIVPLL				5
++#define CLK_APMIXED_MSDCPLL				6
++#define CLK_APMIXED_MMPLL				7
++#define CLK_APMIXED_NPUPLL				8
++#define CLK_APMIXED_MFGPLL				9
++#define CLK_APMIXED_TVDPLL				10
++#define CLK_APMIXED_APLL1				11
++#define CLK_APMIXED_APLL2				12
++#define CLK_APMIXED_USBPLL				13
++#define CLK_APMIXED_NR_CLK				14
++
++/* IMP_IIC_WRAP_C */
++
++#define CLK_IMPC_AP_CLOCK_I2C3				0
++#define CLK_IMPC_AP_CLOCK_I2C5				1
++#define CLK_IMPC_AP_CLOCK_I2C6				2
++#define CLK_IMPC_NR_CLK					3
++
++/* AFE */
++
++#define CLK_AFE_AFE					0
++#define CLK_AFE_22M					1
++#define CLK_AFE_24M					2
++#define CLK_AFE_APLL2_TUNER				3
++#define CLK_AFE_APLL_TUNER				4
++#define CLK_AFE_ADC					5
++#define CLK_AFE_DAC					6
++#define CLK_AFE_DAC_PREDIS				7
++#define CLK_AFE_TML					8
++#define CLK_AFE_NLE					9
++#define CLK_AFE_I2S1_BCLK				10
++#define CLK_AFE_I2S2_BCLK				11
++#define CLK_AFE_I2S3_BCLK				12
++#define CLK_AFE_I2S4_BCLK				13
++#define CLK_AFE_GENERAL3_ASRC				14
++#define CLK_AFE_CONNSYS_I2S_ASRC			15
++#define CLK_AFE_GENERAL1_ASRC				16
++#define CLK_AFE_GENERAL2_ASRC				17
++#define CLK_AFE_DAC_HIRES				18
++#define CLK_AFE_ADC_HIRES				19
++#define CLK_AFE_ADC_HIRES_TML				20
++#define CLK_AFE_NR_CLK					21
++
++/* IMP_IIC_WRAP_W */
++
++#define CLK_IMPW_AP_CLOCK_I2C0				0
++#define CLK_IMPW_AP_CLOCK_I2C1				1
++#define CLK_IMPW_NR_CLK					2
++
++/* IMP_IIC_WRAP_EN */
++
++#define CLK_IMPEN_AP_CLOCK_I2C2				0
++#define CLK_IMPEN_AP_CLOCK_I2C4				1
++#define CLK_IMPEN_AP_CLOCK_I2C8				2
++#define CLK_IMPEN_AP_CLOCK_I2C9				3
++#define CLK_IMPEN_NR_CLK				4
++
++/* IMP_IIC_WRAP_N */
++
++#define CLK_IMPN_AP_CLOCK_I2C7				0
++#define CLK_IMPN_NR_CLK					1
++
++/* MFG_TOP_CONFIG */
++
++#define CLK_MFGCFG_BG3D					0
++#define CLK_MFGCFG_NR_CLK				1
++
++/* DISPSYS_CONFIG */
++
++#define CLK_MM_DISP_MUTEX0				0
++#define CLK_MM_APB_BUS					1
++#define CLK_MM_DISP_OVL0				2
++#define CLK_MM_DISP_RDMA0				3
++#define CLK_MM_DISP_OVL0_2L				4
++#define CLK_MM_DISP_WDMA0				5
++#define CLK_MM_DISP_RSZ0				6
++#define CLK_MM_DISP_AAL0				7
++#define CLK_MM_DISP_CCORR0				8
++#define CLK_MM_DISP_COLOR0				9
++#define CLK_MM_SMI_INFRA				10
++#define CLK_MM_DISP_DSC_WRAP0				11
++#define CLK_MM_DISP_GAMMA0				12
++#define CLK_MM_DISP_POSTMASK0				13
++#define CLK_MM_DISP_DITHER0				14
++#define CLK_MM_SMI_COMMON				15
++#define CLK_MM_DSI0					16
++#define CLK_MM_DISP_FAKE_ENG0				17
++#define CLK_MM_DISP_FAKE_ENG1				18
++#define CLK_MM_SMI_GALS					19
++#define CLK_MM_SMI_IOMMU				20
++#define CLK_MM_DSI0_DSI_CK_DOMAIN			21
++#define CLK_MM_DISP_26M					22
++#define CLK_MM_NR_CLK					23
++
++/* DISP_DSC */
++
++#define CLK_DISP_DSC_DSC_EN				0
++#define CLK_DISP_DSC_NR_CLK				1
++
++/* IMGSYS1 */
++
++#define CLK_IMGSYS1_LARB9				0
++#define CLK_IMGSYS1_LARB10				1
++#define CLK_IMGSYS1_DIP					2
++#define CLK_IMGSYS1_GALS				3
++#define CLK_IMGSYS1_NR_CLK				4
++
++/* VDEC_GCON_BASE */
++
++#define CLK_VDE2_LARB1_CKEN				0
++#define CLK_VDE2_LAT_CKEN				1
++#define CLK_VDE2_LAT_ACTIVE				2
++#define CLK_VDE2_LAT_CKEN_ENG				3
++#define CLK_VDE2_MINI_MDP_CKEN_CFG_RG			4
++#define CLK_VDE2_VDEC_CKEN				5
++#define CLK_VDE2_VDEC_ACTIVE				6
++#define CLK_VDE2_VDEC_CKEN_ENG				7
++#define CLK_VDE2_NR_CLK					8
++
++/* VENC_GCON */
++
++#define CLK_VEN1_CKE0_LARB				0
++#define CLK_VEN1_CKE1_VENC				1
++#define CLK_VEN1_CKE2_JPGENC				2
++#define CLK_VEN1_CKE5_GALS				3
++#define CLK_VEN1_NR_CLK					4
++
++/* CAMSYS_MAIN */
++
++#define CLK_CAM_M_LARB13				0
++#define CLK_CAM_M_LARB14				1
++#define CLK_CAM_M_CAM					2
++#define CLK_CAM_M_CAMTG					3
++#define CLK_CAM_M_SENINF				4
++#define CLK_CAM_M_CAMSV1				5
++#define CLK_CAM_M_CAMSV2				6
++#define CLK_CAM_M_CAMSV3				7
++#define CLK_CAM_M_MRAW0					8
++#define CLK_CAM_M_FAKE_ENG				9
++#define CLK_CAM_M_CAM2MM_GALS				10
++#define CLK_CAM_M_NR_CLK				11
++
++/* CAMSYS_RAWA */
++
++#define CLK_CAM_RA_LARBX				0
++#define CLK_CAM_RA_CAM					1
++#define CLK_CAM_RA_CAMTG				2
++#define CLK_CAM_RA_NR_CLK				3
++
++/* CAMSYS_RAWB */
++
++#define CLK_CAM_RB_LARBX				0
++#define CLK_CAM_RB_CAM					1
++#define CLK_CAM_RB_CAMTG				2
++#define CLK_CAM_RB_NR_CLK				3
++
++/* IPESYS */
++
++#define CLK_IPE_LARB19					0
++#define CLK_IPE_LARB20					1
++#define CLK_IPE_SMI_SUBCOM				2
++#define CLK_IPE_FD					3
++#define CLK_IPE_FE					4
++#define CLK_IPE_RSC					5
++#define CLK_IPE_DPE					6
++#define CLK_IPE_GALS					7
++#define CLK_IPE_NR_CLK					8
++
++/* MDPSYS_CONFIG */
++
++#define CLK_MDP_RDMA0					0
++#define CLK_MDP_TDSHP0					1
++#define CLK_MDP_IMG_DL_ASYNC0				2
++#define CLK_MDP_IMG_DL_ASYNC1				3
++#define CLK_MDP_SMI0					4
++#define CLK_MDP_APB_BUS					5
++#define CLK_MDP_WROT0					6
++#define CLK_MDP_RSZ0					7
++#define CLK_MDP_HDR0					8
++#define CLK_MDP_MUTEX0					9
++#define CLK_MDP_WROT1					10
++#define CLK_MDP_RSZ1					11
++#define CLK_MDP_FAKE_ENG0				12
++#define CLK_MDP_AAL0					13
++#define CLK_MDP_IMG_DL_RELAY0_ASYNC0			14
++#define CLK_MDP_IMG_DL_RELAY1_ASYNC1			15
++#define CLK_MDP_NR_CLK					16
++
++#endif /* __DT_BINDINGS_CLOCK_MT6789_CLK_H */
+diff --git a/include/dt-bindings/reset/mt6789-resets.h b/include/dt-bindings/reset/mt6789-resets.h
+new file mode 100644
+index 00000000..43a89940
+--- /dev/null
++++ b/include/dt-bindings/reset/mt6789-resets.h
+@@ -0,0 +1,14 @@
++/* SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause) */
++/*
++ * Copyright (c) 2026 MediaTek Inc.
++ */
++
++#ifndef _DT_BINDINGS_RESET_CONTROLLER_MT6789
++#define _DT_BINDINGS_RESET_CONTROLLER_MT6789
++
++#define MT6789_INFRA_RST0_THERM_CTRL_SWRST	0
++#define MT6789_INFRA_RST1_UFS_SWRST		1
++#define MT6789_INFRA_RST2_UFS_UNIPRO_SWRST	2
++#define MT6789_INFRA_RST3_UFS_AES_SWRST		3
++
++#endif  /* _DT_BINDINGS_RESET_CONTROLLER_MT6789 */
+-- 
+2.55.0
+

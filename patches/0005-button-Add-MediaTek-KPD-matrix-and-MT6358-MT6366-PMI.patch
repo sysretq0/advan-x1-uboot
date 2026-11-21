@@ -1,0 +1,276 @@
+From 9faee685f46718513334fb408df785e3988d3c95 Mon Sep 17 00:00:00 2001
+From: sysretq0 <324514544+sysretq0@users.noreply.github.com>
+Date: Sat, 21 Nov 2026 08:21:25 +0000
+Subject: [PATCH 5/6] button: Add MediaTek KPD matrix and MT6358/MT6366 PMIC
+ key drivers
+
+Change-Id: If6f5edbb7595e02d96c9a4781d0696c540a71c89
+Signed-off-by: sysretq0 <324514544+sysretq0@users.noreply.github.com>
+---
+ drivers/button/Kconfig           |   7 +
+ drivers/button/Makefile          |   1 +
+ drivers/button/button-mtk-keys.c | 222 +++++++++++++++++++++++++++++++
+ 3 files changed, 230 insertions(+)
+ create mode 100644 drivers/button/button-mtk-keys.c
+
+diff --git a/drivers/button/Kconfig b/drivers/button/Kconfig
+index f9a1c3e2..a4084a7b 100644
+--- a/drivers/button/Kconfig
++++ b/drivers/button/Kconfig
+@@ -39,6 +39,13 @@ config BUTTON_GPIO
+ 	  The GPIO driver must used driver model. Buttons are configured using
+ 	  the device tree.
+ 
++config BUTTON_MTK_KEYS
++	bool "MediaTek KPD and MT6358/MT6366 PMIC keys"
++	depends on BUTTON && ARCH_MEDIATEK
++	help
++	  Enable support for MediaTek keypad matrix keys (e.g. Volume Down)
++	  and MT6358/MT6366 PMIC keys (Power / Home / Volume Up) via pwrap.
++
+ config BUTTON_QCOM_PMIC
+ 	bool "Qualcomm power button"
+ 	depends on BUTTON
+diff --git a/drivers/button/Makefile b/drivers/button/Makefile
+index 336bbc94..ffff3ed7 100644
+--- a/drivers/button/Makefile
++++ b/drivers/button/Makefile
+@@ -5,5 +5,6 @@
+ obj-$(CONFIG_BUTTON) += button-uclass.o
+ obj-$(CONFIG_BUTTON_ADC) += button-adc.o
+ obj-$(CONFIG_BUTTON_GPIO) += button-gpio.o
++obj-$(CONFIG_BUTTON_MTK_KEYS) += button-mtk-keys.o
+ obj-$(CONFIG_BUTTON_QCOM_PMIC) += button-qcom-pmic.o
+ obj-$(CONFIG_BUTTON_SNVS_PWRKEY) += button-snvs-pwrkey.o
+\ No newline at end of file
+diff --git a/drivers/button/button-mtk-keys.c b/drivers/button/button-mtk-keys.c
+new file mode 100644
+index 00000000..9f306677
+--- /dev/null
++++ b/drivers/button/button-mtk-keys.c
+@@ -0,0 +1,222 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * MediaTek KPD matrix and MT6358/MT6366 PMIC button drivers.
++ *
++ * - mediatek,mt6789-kpd: polls active-low matrix key bits in KPD_MEM1..5
++ *   (base + 0x04 + (bit / 16) * 4), e.g. Volume Down (bit 0) on Advan X1.
++ * - mediatek,mt6358-keys: polls MT6358/MT6366 TOPSTATUS (0x28) via pwrap
++ *   for PWRKEY (bit 1) and HOMEKEY / Volume Up (bit 3).
++ */
++
++#include <button.h>
++#include <dm.h>
++#include <dm/device_compat.h>
++#include <dm/lists.h>
++#include <asm/io.h>
++#include <dt-bindings/input/linux-event-codes.h>
++#include <linux/bitops.h>
++#include <power/pmic.h>
++
++#define KPD_MEM1_OFS		0x04
++#define MT6358_TOPSTATUS	0x28
++
++/* ---- MediaTek KPD Matrix Key Driver ---- */
++
++struct mtk_kpd_btn_priv {
++	void __iomem *base;
++	u32 bit;
++	u32 code;
++};
++
++static enum button_state_t mtk_kpd_btn_get_state(struct udevice *dev)
++{
++	struct mtk_kpd_btn_priv *priv = dev_get_priv(dev);
++	u32 reg_ofs = KPD_MEM1_OFS + (priv->bit / 16) * 4;
++	u16 val = readw(priv->base + reg_ofs);
++
++	/* KPD matrix bits are active-low: 0 = pressed, 1 = released */
++	return (val & BIT(priv->bit % 16)) ? BUTTON_OFF : BUTTON_ON;
++}
++
++static int mtk_kpd_btn_get_code(struct udevice *dev)
++{
++	struct mtk_kpd_btn_priv *priv = dev_get_priv(dev);
++
++	return priv->code;
++}
++
++static int mtk_kpd_btn_probe(struct udevice *dev)
++{
++	struct mtk_kpd_btn_priv *priv = dev_get_priv(dev);
++	struct button_uc_plat *uc_plat = dev_get_uclass_plat(dev);
++
++	/* Top-level controller node carries no label */
++	if (!uc_plat->label)
++		return 0;
++
++	priv->base = dev_read_addr_ptr(dev_get_parent(dev));
++	if (!priv->base)
++		return -EINVAL;
++
++	priv->bit = dev_read_u32_default(dev, "mediatek,kpd-bit", 0);
++	priv->code = dev_read_u32_default(dev, "linux,code", KEY_VOLUMEDOWN);
++
++	return 0;
++}
++
++static int mtk_kpd_btn_bind(struct udevice *parent)
++{
++	ofnode node;
++	int ret;
++
++	dev_for_each_subnode(node, parent) {
++		struct button_uc_plat *uc_plat;
++		struct udevice *dev;
++		const char *label;
++
++		if (!ofnode_is_enabled(node))
++			continue;
++
++		label = ofnode_read_string(node, "label");
++		if (!label)
++			label = ofnode_get_name(node);
++
++		ret = device_bind_driver_to_node(parent, "mtk_kpd_btn",
++						 ofnode_get_name(node),
++						 node, &dev);
++		if (ret)
++			return ret;
++
++		uc_plat = dev_get_uclass_plat(dev);
++		uc_plat->label = label;
++	}
++
++	return 0;
++}
++
++static const struct button_ops mtk_kpd_btn_ops = {
++	.get_state	= mtk_kpd_btn_get_state,
++	.get_code	= mtk_kpd_btn_get_code,
++};
++
++static const struct udevice_id mtk_kpd_btn_ids[] = {
++	{ .compatible = "mediatek,mt6789-kpd" },
++	{ }
++};
++
++U_BOOT_DRIVER(mtk_kpd_btn) = {
++	.name		= "mtk_kpd_btn",
++	.id		= UCLASS_BUTTON,
++	.of_match	= mtk_kpd_btn_ids,
++	.bind		= mtk_kpd_btn_bind,
++	.probe		= mtk_kpd_btn_probe,
++	.ops		= &mtk_kpd_btn_ops,
++	.priv_auto	= sizeof(struct mtk_kpd_btn_priv),
++};
++
++/* ---- MediaTek MT6358 / MT6366 PMIC Key Driver ---- */
++
++struct mtk_pmic_btn_priv {
++	struct udevice *pmic;
++	u32 reg;
++	u32 bit;
++	u32 code;
++};
++
++static enum button_state_t mtk_pmic_btn_get_state(struct udevice *dev)
++{
++	struct mtk_pmic_btn_priv *priv = dev_get_priv(dev);
++	int val;
++
++	if (!priv->pmic)
++		return BUTTON_OFF;
++
++	val = pmic_reg_read(priv->pmic, priv->reg);
++	if (val < 0)
++		return BUTTON_OFF;
++
++	/* MT6358/MT6366 TOPSTATUS bits are active-high when debounced pressed */
++	return (val & BIT(priv->bit)) ? BUTTON_ON : BUTTON_OFF;
++}
++
++static int mtk_pmic_btn_get_code(struct udevice *dev)
++{
++	struct mtk_pmic_btn_priv *priv = dev_get_priv(dev);
++
++	return priv->code;
++}
++
++static int mtk_pmic_btn_probe(struct udevice *dev)
++{
++	struct mtk_pmic_btn_priv *priv = dev_get_priv(dev);
++	struct button_uc_plat *uc_plat = dev_get_uclass_plat(dev);
++	int ret;
++
++	if (!uc_plat->label)
++		return 0;
++
++	ret = uclass_get_device_by_phandle(UCLASS_PMIC, dev_get_parent(dev),
++					   "pmic", &priv->pmic);
++	if (ret) {
++		dev_err(dev, "failed to get PMIC device: %d\n", ret);
++		return ret;
++	}
++
++	priv->reg = dev_read_u32_default(dev, "mediatek,status-reg",
++					 MT6358_TOPSTATUS);
++	priv->bit = dev_read_u32_default(dev, "mediatek,status-bit", 1);
++	priv->code = dev_read_u32_default(dev, "linux,code", KEY_POWER);
++
++	return 0;
++}
++
++static int mtk_pmic_btn_bind(struct udevice *parent)
++{
++	ofnode node;
++	int ret;
++
++	dev_for_each_subnode(node, parent) {
++		struct button_uc_plat *uc_plat;
++		struct udevice *dev;
++		const char *label;
++
++		if (!ofnode_is_enabled(node))
++			continue;
++
++		label = ofnode_read_string(node, "label");
++		if (!label)
++			label = ofnode_get_name(node);
++
++		ret = device_bind_driver_to_node(parent, "mtk_pmic_btn",
++						 ofnode_get_name(node),
++						 node, &dev);
++		if (ret)
++			return ret;
++
++		uc_plat = dev_get_uclass_plat(dev);
++		uc_plat->label = label;
++	}
++
++	return 0;
++}
++
++static const struct button_ops mtk_pmic_btn_ops = {
++	.get_state	= mtk_pmic_btn_get_state,
++	.get_code	= mtk_pmic_btn_get_code,
++};
++
++static const struct udevice_id mtk_pmic_btn_ids[] = {
++	{ .compatible = "mediatek,mt6358-keys" },
++	{ .compatible = "mediatek,mt6366-keys" },
++	{ }
++};
++
++U_BOOT_DRIVER(mtk_pmic_btn) = {
++	.name		= "mtk_pmic_btn",
++	.id		= UCLASS_BUTTON,
++	.of_match	= mtk_pmic_btn_ids,
++	.bind		= mtk_pmic_btn_bind,
++	.probe		= mtk_pmic_btn_probe,
++	.ops		= &mtk_pmic_btn_ops,
++	.priv_auto	= sizeof(struct mtk_pmic_btn_priv),
++};
+-- 
+2.55.0
+

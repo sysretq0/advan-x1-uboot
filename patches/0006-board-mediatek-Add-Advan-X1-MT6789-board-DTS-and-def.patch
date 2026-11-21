@@ -1,0 +1,636 @@
+From 114b13287edc07828c1f3c04fec50190208e5006 Mon Sep 17 00:00:00 2001
+From: sysretq0 <324514544+sysretq0@users.noreply.github.com>
+Date: Sat, 21 Nov 2026 08:43:01 +0000
+Subject: [PATCH 6/6] board: mediatek: Add Advan X1 (MT6789) board, DTS, and
+ defconfig
+
+Change-Id: I88016b3e1efba68077f1b0055288da2b9ad5a2ee
+Signed-off-by: sysretq0 <324514544+sysretq0@users.noreply.github.com>
+---
+ arch/arm/dts/Makefile             |   1 +
+ arch/arm/dts/mt6789-advan-x1.dts  | 126 +++++++++++++++++
+ arch/arm/dts/mt6789.dtsi          | 221 ++++++++++++++++++++++++++++++
+ board/mediatek/mt6789/MAINTAINERS |  10 ++
+ board/mediatek/mt6789/Makefile    |   3 +
+ board/mediatek/mt6789/mt6789.c    |  74 ++++++++++
+ configs/mt6789_advan_x1_defconfig |  78 +++++++++++
+ include/configs/mt6789.h          |  41 ++++++
+ 8 files changed, 554 insertions(+)
+ create mode 100644 arch/arm/dts/mt6789-advan-x1.dts
+ create mode 100644 arch/arm/dts/mt6789.dtsi
+ create mode 100644 board/mediatek/mt6789/MAINTAINERS
+ create mode 100644 board/mediatek/mt6789/Makefile
+ create mode 100644 board/mediatek/mt6789/mt6789.c
+ create mode 100644 configs/mt6789_advan_x1_defconfig
+ create mode 100644 include/configs/mt6789.h
+
+diff --git a/arch/arm/dts/Makefile b/arch/arm/dts/Makefile
+index 22f10c8e..6304b9c8 100644
+--- a/arch/arm/dts/Makefile
++++ b/arch/arm/dts/Makefile
+@@ -1055,6 +1055,7 @@ mt8391-genio-720-evk-ufs-edp-dtbs := mt8391-genio-720-evk.dtb \
+ 				     mt8371-genio-common-edp.dtbo
+ 
+ dtb-$(CONFIG_ARCH_MEDIATEK) += \
++	mt6789-advan-x1.dtb \
+ 	mt7622-rfb.dtb \
+ 	mt7623a-unielec-u7623-02-emmc.dtb \
+ 	mt7622-bananapi-bpi-r64.dtb \
+diff --git a/arch/arm/dts/mt6789-advan-x1.dts b/arch/arm/dts/mt6789-advan-x1.dts
+new file mode 100644
+index 00000000..6e5d1f6a
+--- /dev/null
++++ b/arch/arm/dts/mt6789-advan-x1.dts
+@@ -0,0 +1,126 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Advan X1 (MediaTek MT6789 / Helio G99) U-Boot Device Tree.
++ *
++ * All memory windows, display geometry, keypad/PMIC mappings, and peripheral
++ * addresses are derived directly from verified Advan X1 stock artifacts
++ * (loki & advan-x1-mainline).
++ */
++
++/dts-v1/;
++
++#include <dt-bindings/input/linux-event-codes.h>
++#include "mt6789.dtsi"
++
++/ {
++	model = "Advan X1";
++	compatible = "advan,x1", "mediatek,mt6789";
++
++	aliases {
++		serial0 = &uart0;
++	};
++
++	chosen {
++		stdout-path = "serial0:921600n8";
++		#address-cells = <2>;
++		#size-cells = <2>;
++		ranges;
++
++		/*
++		 * Stock LK DSI video-mode framebuffer (Chipone ICNL9922C,
++		 * 1080x2460 visible, 1088px = 4352B stride, 2464 total lines).
++		 * board_fix_fdt() updates reg to the live OVL0_L0_ADDR before
++		 * simplefb probes.
++		 */
++		framebuffer@fe007000 {
++			compatible = "simple-framebuffer";
++			reg = <0x0 0xfe007000 0x0 0x00a3a000>;
++			width = <1080>;
++			height = <2460>;
++			stride = <4352>;
++			format = "a8r8g8b8";
++			status = "okay";
++		};
++	};
++
++	/*
++	 * Verified clean DRAM windows from live /proc/iomem and MT6789 mblock
++	 * reservations:
++	 *   - Bank 0: 0x60000000..0x6EFFFFFF (240 MiB, U-Boot & kernel staging)
++	 *   - Bank 1: 0x140000000..0x2296FFFFF (3.64 GiB clean high RAM)
++	 */
++	memory@60000000 {
++		device_type = "memory";
++		reg = <0x0 0x60000000 0x0 0x0f000000>,
++		      <0x1 0x40000000 0x0 0xe9700000>;
++	};
++
++	reserved-memory {
++		#address-cells = <2>;
++		#size-cells = <2>;
++		ranges;
++
++		ramoops@48090000 {
++			reg = <0x0 0x48090000 0x0 0x000e0000>;
++			no-map;
++		};
++
++		framebuffer_reserved: framebuffer@fe007000 {
++			reg = <0x0 0xfe007000 0x0 0x01ff9000>;
++			no-map;
++		};
++	};
++
++	pmic_keys: pmic-keys {
++		compatible = "mediatek,mt6366-keys", "mediatek,mt6358-keys";
++		pmic = <&pwrap>;
++
++		button-power {
++			label = "Power";
++			linux,code = <KEY_POWER>;
++			mediatek,status-reg = <0x28>;
++			mediatek,status-bit = <1>;
++		};
++
++		button-volup {
++			label = "Volume Up";
++			linux,code = <KEY_VOLUMEUP>;
++			mediatek,status-reg = <0x28>;
++			mediatek,status-bit = <3>;
++		};
++	};
++};
++
++&uart0 {
++	status = "okay";
++};
++
++&keypad {
++	status = "okay";
++
++	button-voldown {
++		label = "Volume Down";
++		linux,code = <KEY_VOLUMEDOWN>;
++		mediatek,kpd-bit = <0>;
++	};
++};
++
++&pwrap {
++	status = "okay";
++
++	pmic: pmic {
++		compatible = "mediatek,mt6366", "mediatek,mt6358";
++	};
++};
++
++&ufshci {
++	status = "okay";
++};
++
++&u2phy0 {
++	status = "okay";
++};
++
++&usb0 {
++	status = "okay";
++};
+diff --git a/arch/arm/dts/mt6789.dtsi b/arch/arm/dts/mt6789.dtsi
+new file mode 100644
+index 00000000..5791c862
+--- /dev/null
++++ b/arch/arm/dts/mt6789.dtsi
+@@ -0,0 +1,221 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * MediaTek MT6789 (Helio G99 / MT8781) SoC Device Tree for U-Boot.
++ *
++ * Peripheral base addresses, clocks, interrupts, and compatible strings are
++ * derived directly from verified Advan X1 mainline Linux & loki mappings.
++ */
++
++#include <dt-bindings/clock/mt6789-clk.h>
++#include <dt-bindings/interrupt-controller/arm-gic.h>
++#include <dt-bindings/interrupt-controller/irq.h>
++#include <dt-bindings/phy/phy.h>
++#include <dt-bindings/reset/mt6789-resets.h>
++
++/ {
++	compatible = "mediatek,mt6789";
++	interrupt-parent = <&gic>;
++	#address-cells = <2>;
++	#size-cells = <2>;
++
++	cpus {
++		#address-cells = <1>;
++		#size-cells = <0>;
++
++		cpu0: cpu@0 {
++			device_type = "cpu";
++			compatible = "arm,cortex-a55";
++			reg = <0x000>;
++			enable-method = "psci";
++		};
++
++		cpu1: cpu@100 {
++			device_type = "cpu";
++			compatible = "arm,cortex-a55";
++			reg = <0x100>;
++			enable-method = "psci";
++		};
++
++		cpu2: cpu@200 {
++			device_type = "cpu";
++			compatible = "arm,cortex-a55";
++			reg = <0x200>;
++			enable-method = "psci";
++		};
++
++		cpu3: cpu@300 {
++			device_type = "cpu";
++			compatible = "arm,cortex-a55";
++			reg = <0x300>;
++			enable-method = "psci";
++		};
++
++		cpu4: cpu@400 {
++			device_type = "cpu";
++			compatible = "arm,cortex-a55";
++			reg = <0x400>;
++			enable-method = "psci";
++		};
++
++		cpu5: cpu@500 {
++			device_type = "cpu";
++			compatible = "arm,cortex-a55";
++			reg = <0x500>;
++			enable-method = "psci";
++		};
++
++		cpu6: cpu@600 {
++			device_type = "cpu";
++			compatible = "arm,cortex-a76";
++			reg = <0x600>;
++			enable-method = "psci";
++		};
++
++		cpu7: cpu@700 {
++			device_type = "cpu";
++			compatible = "arm,cortex-a76";
++			reg = <0x700>;
++			enable-method = "psci";
++		};
++	};
++
++	psci {
++		compatible = "arm,psci-1.0", "arm,psci-0.2";
++		method = "smc";
++	};
++
++	timer {
++		compatible = "arm,armv8-timer";
++		interrupts = <GIC_PPI 13 IRQ_TYPE_LEVEL_LOW>,
++			     <GIC_PPI 14 IRQ_TYPE_LEVEL_LOW>,
++			     <GIC_PPI 11 IRQ_TYPE_LEVEL_LOW>,
++			     <GIC_PPI 10 IRQ_TYPE_LEVEL_LOW>;
++		clock-frequency = <13000000>;
++	};
++
++	clk26m: oscillator-26m {
++		compatible = "fixed-clock";
++		#clock-cells = <0>;
++		clock-frequency = <26000000>;
++		clock-output-names = "clk26m";
++		bootph-all;
++	};
++
++	clk32k: oscillator-32k {
++		compatible = "fixed-clock";
++		#clock-cells = <0>;
++		clock-frequency = <32768>;
++		clock-output-names = "clk32k";
++		bootph-all;
++	};
++
++	soc: soc {
++		compatible = "simple-bus";
++		#address-cells = <2>;
++		#size-cells = <2>;
++		ranges;
++		bootph-all;
++
++		gic: interrupt-controller@c000000 {
++			compatible = "arm,gic-v3";
++			#interrupt-cells = <3>;
++			interrupt-controller;
++			reg = <0x0 0x0c000000 0x0 0x40000>,
++			      <0x0 0x0c040000 0x0 0x200000>;
++		};
++
++		topckgen: clock-controller@10000000 {
++			compatible = "mediatek,mt6789-topckgen", "syscon";
++			reg = <0x0 0x10000000 0x0 0x1000>;
++			#clock-cells = <1>;
++			bootph-all;
++		};
++
++		infracfg_ao: clock-controller@10001000 {
++			compatible = "mediatek,mt6789-infracfg_ao", "syscon";
++			reg = <0x0 0x10001000 0x0 0x1000>;
++			#clock-cells = <1>;
++			bootph-all;
++		};
++
++		watchdog: watchdog@10007000 {
++			compatible = "mediatek,mt6789-wdt", "mediatek,mt6589-wdt";
++			reg = <0x0 0x10007000 0x0 0x100>;
++			bootph-all;
++		};
++
++		apmixedsys: clock-controller@1000c000 {
++			compatible = "mediatek,mt6789-apmixedsys", "syscon";
++			reg = <0x0 0x1000c000 0x0 0x1000>;
++			#clock-cells = <1>;
++			bootph-all;
++		};
++
++		keypad: keypad@10010000 {
++			compatible = "mediatek,mt6789-kpd";
++			reg = <0x0 0x10010000 0x0 0x1000>;
++			status = "disabled";
++		};
++
++		pwrap: pwrap@10026000 {
++			compatible = "mediatek,mt6789-pwrap", "syscon";
++			reg = <0x0 0x10026000 0x0 0x1000>;
++			reg-names = "pwrap";
++			clocks = <&infracfg_ao CLK_IFRAO_PMIC_AP>,
++				 <&infracfg_ao CLK_IFRAO_PMIC_TMR>;
++			clock-names = "spi", "wrap";
++			status = "disabled";
++		};
++
++		uart0: serial@11002000 {
++			compatible = "mediatek,mt6577-uart";
++			reg = <0x0 0x11002000 0x0 0x1000>;
++			clocks = <&clk26m>;
++			bootph-all;
++			status = "disabled";
++		};
++
++		usb0: usb@11200000 {
++			compatible = "mediatek,mt6789-musb", "mediatek,mtk-musb";
++			reg = <0x0 0x11200000 0x0 0x10000>;
++			clocks = <&infracfg_ao CLK_IFRAO_SSUSB>,
++				 <&topckgen CLK_TOP_USB_TOP_SEL>,
++				 <&apmixedsys CLK_APMIXED_USBPLL>;
++			clock-names = "main", "mcu", "univpll";
++			phys = <&u2port0 PHY_TYPE_USB2>;
++			dr_mode = "peripheral";
++			status = "disabled";
++		};
++
++		ufshci: ufshci@11270000 {
++			compatible = "mediatek,mt8183-ufshci";
++			reg = <0x0 0x11270000 0x0 0x2300>;
++			clocks = <&infracfg_ao CLK_IFRAO_UFS>,
++				 <&infracfg_ao CLK_IFRAO_UFS_SAP_BCLK>,
++				 <&infracfg_ao CLK_IFRAO_UNIPRO_TICK>,
++				 <&infracfg_ao CLK_IFRAO_UNIPRO_SYSCLK>,
++				 <&infracfg_ao CLK_IFRAO_UFS_AES>,
++				 <&topckgen CLK_TOP_AES_UFSFDE_SEL>,
++				 <&topckgen CLK_TOP_UFS_SEL>;
++			clock-names = "ufs", "ufs_mp", "unipro_tick",
++				      "unipro_sys", "ufs_aes",
++				      "ufsfde_ck", "ufs_ck";
++			status = "disabled";
++		};
++
++		u2phy0: t-phy@11f40000 {
++			compatible = "mediatek,generic-tphy-v2";
++			#address-cells = <1>;
++			#size-cells = <1>;
++			ranges = <0x0 0x0 0x11f40000 0x1000>;
++			status = "disabled";
++
++			u2port0: usb-phy@0 {
++				reg = <0x0 0x700>;
++				clocks = <&clk26m>;
++				clock-names = "ref";
++				#phy-cells = <1>;
++			};
++		};
++	};
++};
+diff --git a/board/mediatek/mt6789/MAINTAINERS b/board/mediatek/mt6789/MAINTAINERS
+new file mode 100644
+index 00000000..610abf36
+--- /dev/null
++++ b/board/mediatek/mt6789/MAINTAINERS
+@@ -0,0 +1,10 @@
++ADVAN X1 (MEDIATEK MT6789 / HELIO G99)
++M:	sysretq0 <sysretq0@users.noreply.github.com>
++S:	Maintained
++F:	arch/arm/dts/mt6789.dtsi
++F:	arch/arm/dts/mt6789-advan-x1.dts
++F:	arch/arm/mach-mediatek/mt6789/
++F:	board/mediatek/mt6789/
++F:	configs/mt6789_advan_x1_defconfig
++F:	drivers/clk/mediatek/clk-mt6789.c
++F:	include/configs/mt6789.h
+diff --git a/board/mediatek/mt6789/Makefile b/board/mediatek/mt6789/Makefile
+new file mode 100644
+index 00000000..7e9ce797
+--- /dev/null
++++ b/board/mediatek/mt6789/Makefile
+@@ -0,0 +1,3 @@
++# SPDX-License-Identifier: GPL-2.0
++
++obj-y += mt6789.o
+diff --git a/board/mediatek/mt6789/mt6789.c b/board/mediatek/mt6789/mt6789.c
+new file mode 100644
+index 00000000..3f4d9038
+--- /dev/null
++++ b/board/mediatek/mt6789/mt6789.c
+@@ -0,0 +1,74 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Board support for Advan X1 (MediaTek MT6789 / Helio G99).
++ *
++ * Chainloaded from stock LK via the loki embedded subpartition at 0x60000000
++ * with ATF BL31 resident at EL3 (0x48200000) and DSI video-mode scanout
++ * already active on OVL0.
++ */
++
++#include <dm.h>
++#include <env.h>
++#include <fdt_support.h>
++#include <init.h>
++#include <log.h>
++#include <ufs.h>
++#include <asm/io.h>
++#include <linux/libfdt.h>
++
++/* MT6789 DISP_OVL0 active Layer 0 physical framebuffer address register */
++#define MT6789_OVL0_L0_ADDR	0x14005f40
++#define MT6789_FB_WINDOW_MIN	0xfe000000U
++#define MT6789_FB_WINDOW_MAX	0xff800000U
++#define MT6789_FB_SIZE_BYTES	0x00a3a000U /* 1088 * 4 * 2464 */
++
++#ifdef CONFIG_OF_BOARD_FIXUP
++int board_fix_fdt(void *rw_fdt_blob)
++{
++	u32 live_fb = readl(MT6789_OVL0_L0_ADDR);
++	int node;
++
++	/*
++	 * Stock LK double-buffers between 0xFE007000 and 0xFEA41000.
++	 * Query the live OVL0 scanout address and patch simple-framebuffer
++	 * before DM video probe so U-Boot always renders to the visible buffer.
++	 */
++	if (live_fb >= MT6789_FB_WINDOW_MIN && live_fb <= MT6789_FB_WINDOW_MAX) {
++		node = fdt_node_offset_by_compatible(rw_fdt_blob, -1,
++						     "simple-framebuffer");
++		if (node >= 0) {
++			fdt32_t reg[4] = {
++				cpu_to_fdt32(0),
++				cpu_to_fdt32(live_fb),
++				cpu_to_fdt32(0),
++				cpu_to_fdt32(MT6789_FB_SIZE_BYTES),
++			};
++			fdt_setprop(rw_fdt_blob, node, "reg", reg, sizeof(reg));
++		}
++	}
++
++	return 0;
++}
++#endif
++
++int board_init(void)
++{
++	struct udevice *dev;
++	int ret;
++
++	if (CONFIG_IS_ENABLED(USB_GADGET)) {
++		ret = uclass_get_device(UCLASS_USB_GADGET_GENERIC, 0, &dev);
++		if (ret)
++			log_debug("mt6789: USB gadget probe deferred/failed: %d\n", ret);
++	}
++
++	return 0;
++}
++
++int board_late_init(void)
++{
++	if (CONFIG_IS_ENABLED(UFS))
++		ufs_probe();
++
++	return 0;
++}
+diff --git a/configs/mt6789_advan_x1_defconfig b/configs/mt6789_advan_x1_defconfig
+new file mode 100644
+index 00000000..51727791
+--- /dev/null
++++ b/configs/mt6789_advan_x1_defconfig
+@@ -0,0 +1,78 @@
++CONFIG_ARM=y
++CONFIG_COUNTER_FREQUENCY=13000000
++CONFIG_POSITION_INDEPENDENT=y
++CONFIG_ARCH_MEDIATEK=y
++CONFIG_TEXT_BASE=0x60000000
++CONFIG_SYS_MALLOC_F_LEN=0x8000
++CONFIG_NR_DRAM_BANKS=2
++CONFIG_DEFAULT_DEVICE_TREE="mt6789-advan-x1"
++CONFIG_OF_LIBFDT_OVERLAY=y
++CONFIG_OF_BOARD_FIXUP=y
++CONFIG_TARGET_MT6789=y
++CONFIG_SYS_LOAD_ADDR=0x61000000
++CONFIG_FIT=y
++CONFIG_BOOTSTD_FULL=y
++CONFIG_BOOTDELAY=2
++CONFIG_USE_BOOTCOMMAND=y
++CONFIG_BOOTCOMMAND="bootmenu"
++CONFIG_BOARD_LATE_INIT=y
++CONFIG_SYS_CONSOLE_IS_IN_ENV=y
++CONFIG_HUSH_PARSER=y
++CONFIG_CMD_BOOTI=y
++CONFIG_CMD_BOOTM=y
++CONFIG_CMD_BOOTMENU=y
++CONFIG_CMD_CLK=y
++CONFIG_CMD_EXT4=y
++CONFIG_CMD_FAT=y
++CONFIG_CMD_FS_GENERIC=y
++CONFIG_CMD_GPT=y
++CONFIG_CMD_PART=y
++CONFIG_CMD_PMIC=y
++CONFIG_CMD_SCSI=y
++CONFIG_CMD_SYSBOOT=y
++CONFIG_CMD_UFS=y
++CONFIG_CMD_FASTBOOT=y
++CONFIG_EFI_PARTITION=y
++CONFIG_OF_CONTROL=y
++CONFIG_ENV_IS_NOWHERE=y
++CONFIG_BUTTON=y
++CONFIG_BUTTON_REMAP_PHONE_KEYS=y
++CONFIG_BUTTON_MTK_KEYS=y
++CONFIG_DM_GPIO=y
++CONFIG_DM_KEYBOARD=y
++CONFIG_BUTTON_KEYBOARD=y
++CONFIG_CLK=y
++CONFIG_FASTBOOT_BUF_ADDR=0x62000000
++CONFIG_FASTBOOT_BUF_SIZE=0x08000000
++CONFIG_FASTBOOT_FLASH=y
++CONFIG_FASTBOOT_FLASH_BLOCK=y
++CONFIG_FASTBOOT_FLASH_BLOCK_INTERFACE_NAME="scsi"
++CONFIG_FASTBOOT_FLASH_BLOCK_DEVICE_ID=2
++CONFIG_PHY=y
++CONFIG_PHY_MTK_TPHY=y
++CONFIG_DM_PMIC=y
++CONFIG_DM_PMIC_MTK_PWRAP=y
++CONFIG_SCSI=y
++CONFIG_DM_SCSI=y
++CONFIG_BAUDRATE=921600
++CONFIG_DM_SERIAL=y
++CONFIG_MTK_SERIAL=y
++CONFIG_SYSRESET=y
++CONFIG_SYSRESET_PSCI=y
++CONFIG_UFS=y
++CONFIG_UFS_MEDIATEK=y
++CONFIG_USB=y
++CONFIG_USB_GADGET=y
++CONFIG_USB_GADGET_MANUFACTURER="Advan"
++CONFIG_USB_GADGET_VENDOR_NUM=0x0e8d
++CONFIG_USB_GADGET_PRODUCT_NUM=0x201c
++CONFIG_USB_MUSB_GADGET=y
++CONFIG_USB_MUSB_MTK=y
++CONFIG_USB_FUNCTION_FASTBOOT=y
++CONFIG_VIDEO=y
++CONFIG_VIDEO_SIMPLE=y
++CONFIG_VIDEO_ANSI=y
++CONFIG_VIDEO_FONT_8X16=y
++CONFIG_CONSOLE_NORMAL=y
++CONFIG_WDT=y
++CONFIG_WDT_MTK=y
+diff --git a/include/configs/mt6789.h b/include/configs/mt6789.h
+new file mode 100644
+index 00000000..0cede61b
+--- /dev/null
++++ b/include/configs/mt6789.h
+@@ -0,0 +1,41 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++/*
++ * Configuration header for MediaTek MT6789 (Advan X1).
++ */
++
++#ifndef __MT6789_H
++#define __MT6789_H
++
++#include <linux/sizes.h>
++
++/* Early stack/GD inside verified clean mid-DRAM staging region */
++#define CFG_SYS_INIT_RAM_ADDR		0x60000000
++#define CFG_SYS_INIT_RAM_SIZE		SZ_2M
++
++/*
++ * Standard ARM64 staging coordinates inside the verified clean
++ * 0x60000000..0x6F000000 DRAM window (2 MiB aligned for Linux Image):
++ *   - kernel_addr_r  : 0x61000000 (88 MiB headroom before ramdisk)
++ *   - ramdisk_addr_r : 0x66800000
++ *   - fdt_addr_r     : 0x60400000
++ */
++#define CFG_EXTRA_ENV_SETTINGS \
++	"stdin=serial,button-kbd\0" \
++	"stdout=serial,vidconsole\0" \
++	"stderr=serial,vidconsole\0" \
++	"fdt_high=0xffffffffffffffff\0" \
++	"initrd_high=0xffffffffffffffff\0" \
++	"scriptaddr=0x60300000\0" \
++	"pxefile_addr_r=0x60380000\0" \
++	"fdt_addr_r=0x60400000\0" \
++	"fdtoverlay_addr_r=0x60500000\0" \
++	"kernel_addr_r=0x61000000\0" \
++	"ramdisk_addr_r=0x66800000\0" \
++	"bootmenu_0=Boot Mainline Linux (UFS)=bootflow scan -lb\0" \
++	"bootmenu_1=USB Fastboot Mode=fastboot usb 0\0" \
++	"bootmenu_2=U-Boot Command Shell=echo Type 'bootmenu' to return\0" \
++	"bootmenu_3=Reboot=reset\0" \
++	"bootmenu_4=Power Off=poweroff\0" \
++	"bootmenu_delay=5\0"
++
++#endif /* __MT6789_H */
+-- 
+2.55.0
+

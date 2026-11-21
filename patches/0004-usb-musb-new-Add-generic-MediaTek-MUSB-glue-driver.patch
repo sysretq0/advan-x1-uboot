@@ -1,0 +1,331 @@
+From 9437a2afc7a98113f2742ac1c02bf458f7d244a3 Mon Sep 17 00:00:00 2001
+From: sysretq0 <324514544+sysretq0@users.noreply.github.com>
+Date: Sat, 21 Nov 2026 08:20:30 +0000
+Subject: [PATCH 4/6] usb: musb-new: Add generic MediaTek MUSB glue driver
+
+Change-Id: I129b57b3ca2dd3fbc25192cdfdeca59b69289264
+Signed-off-by: sysretq0 <324514544+sysretq0@users.noreply.github.com>
+---
+ drivers/usb/musb-new/Kconfig    |   8 +
+ drivers/usb/musb-new/Makefile   |   1 +
+ drivers/usb/musb-new/mediatek.c | 277 ++++++++++++++++++++++++++++++++
+ 3 files changed, 286 insertions(+)
+ create mode 100644 drivers/usb/musb-new/mediatek.c
+
+diff --git a/drivers/usb/musb-new/Kconfig b/drivers/usb/musb-new/Kconfig
+index 208e47d8..f4e90746 100644
+--- a/drivers/usb/musb-new/Kconfig
++++ b/drivers/usb/musb-new/Kconfig
+@@ -59,6 +59,14 @@ config USB_MUSB_DSPS
+ 	bool "TI DSPS platforms"
+ 	depends on ARCH_OMAP2PLUS
+ 
++config USB_MUSB_MTK
++	bool "Enable MediaTek generic MUSB DRC USB controller"
++	depends on ARCH_MEDIATEK && PHY
++	select USB_MUSB_PIO_ONLY
++	help
++	  Enable support for MediaTek MUSB OTG/peripheral controllers paired
++	  with generic MediaTek T-PHY (e.g. MT6789 / Helio G99).
++
+ config USB_MUSB_MT85XX
+ 	bool "Enable Mediatek MT85XX DRC USB controller"
+ 	depends on ARCH_MEDIATEK
+diff --git a/drivers/usb/musb-new/Makefile b/drivers/usb/musb-new/Makefile
+index 6638772d..ee9cb9e7 100644
+--- a/drivers/usb/musb-new/Makefile
++++ b/drivers/usb/musb-new/Makefile
+@@ -8,6 +8,7 @@ obj-$(CONFIG_USB_MUSB_HOST) += musb_host.o musb_core.o musb_uboot.o
+ obj-$(CONFIG_USB_MUSB_DSPS) += musb_dsps.o
+ obj-$(CONFIG_USB_MUSB_DA8XX)	+= da8xx.o
+ obj-$(CONFIG_USB_MUSB_AM35X) += am35x.o
++obj-$(CONFIG_USB_MUSB_MTK) += mediatek.o
+ obj-$(CONFIG_USB_MUSB_MT85XX) += mt85xx.o
+ obj-$(CONFIG_USB_MUSB_OMAP2PLUS) += omap2430.o
+ obj-$(CONFIG_USB_MUSB_PIC32) += pic32.o
+diff --git a/drivers/usb/musb-new/mediatek.c b/drivers/usb/musb-new/mediatek.c
+new file mode 100644
+index 00000000..836a1b01
+--- /dev/null
++++ b/drivers/usb/musb-new/mediatek.c
+@@ -0,0 +1,277 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Generic MediaTek MUSB glue driver (MT6789 / Helio G99 and compatible SoCs).
++ *
++ * Uses standard DM clock bulk + generic PHY (phy-mtk-tphy) and MediaTek
++ * Level-1 interrupt / W1C register semantics.
++ */
++
++#include <clk.h>
++#include <dm.h>
++#include <dm/device_compat.h>
++#include <generic-phy.h>
++#include <usb.h>
++#include <asm/io.h>
++#include <linux/bitops.h>
++#include <linux/usb/musb.h>
++
++#include "linux-compat.h"
++#include "musb_core.h"
++#include "musb_uboot.h"
++
++#define USB_L1INTS		0x00a0
++#define USB_L1INTM		0x00a4
++
++#define MUSB_RXTOG		0x0080
++#define MUSB_RXTOGEN		0x0082
++#define MUSB_TXTOG		0x0084
++#define MUSB_TXTOGEN		0x0086
++#define MTK_TOGGLE_EN		0xffff
++
++#define TX_INT_STATUS		BIT(0)
++#define RX_INT_STATUS		BIT(1)
++#define USBCOM_INT_STATUS	BIT(2)
++
++#define MTK_MUSB_MAX_EP_NUM	8
++#define MTK_MUSB_RAM_BITS	16
++
++struct mtk_musb_glue {
++	struct musb_host_data mdata;
++	struct device dev;
++	struct clk_bulk clks;
++	struct phy phy;
++	bool enabled;
++};
++
++#define to_mtk_musb_glue(d)	container_of(d, struct mtk_musb_glue, dev)
++
++static irqreturn_t mtk_musb_interrupt(int irq, void *__hci)
++{
++	struct musb *musb = __hci;
++	irqreturn_t retval = IRQ_NONE;
++	u32 l1_ints;
++
++	l1_ints = musb_readl(musb->mregs, USB_L1INTS) &
++		  musb_readl(musb->mregs, USB_L1INTM);
++	if (!(l1_ints & (TX_INT_STATUS | RX_INT_STATUS | USBCOM_INT_STATUS)))
++		return IRQ_NONE;
++
++	/* MediaTek MUSB interrupt status registers are write-1-to-clear */
++	musb->int_usb = musb_readb(musb->mregs, MUSB_INTRUSB);
++	if (musb->int_usb)
++		musb_writeb(musb->mregs, MUSB_INTRUSB, musb->int_usb);
++
++	musb->int_tx = musb_readw(musb->mregs, MUSB_INTRTX);
++	if (musb->int_tx)
++		musb_writew(musb->mregs, MUSB_INTRTX, musb->int_tx);
++
++	musb->int_rx = musb_readw(musb->mregs, MUSB_INTRRX);
++	if (musb->int_rx)
++		musb_writew(musb->mregs, MUSB_INTRRX, musb->int_rx);
++
++	if ((musb->int_usb & MUSB_INTR_RESET) && !is_host_active(musb)) {
++		musb_ep_select(musb->mregs, 0);
++		musb_writeb(musb->mregs, MUSB_FADDR, 0);
++	}
++
++	if (musb->int_usb || musb->int_tx || musb->int_rx)
++		retval = musb_interrupt(musb);
++
++	return retval;
++}
++
++static int mtk_musb_enable(struct musb *musb)
++{
++	struct mtk_musb_glue *glue = to_mtk_musb_glue(musb->controller);
++	int ret;
++
++	musb_ep_select(musb->mregs, 0);
++	musb_writeb(musb->mregs, MUSB_FADDR, 0);
++
++	if (glue->enabled)
++		return 0;
++
++	if (generic_phy_valid(&glue->phy)) {
++		ret = generic_phy_power_on(&glue->phy);
++		if (ret)
++			return ret;
++	}
++
++	glue->enabled = true;
++	return 0;
++}
++
++static void mtk_musb_disable(struct musb *musb)
++{
++	struct mtk_musb_glue *glue = to_mtk_musb_glue(musb->controller);
++
++	if (!glue->enabled)
++		return;
++
++	if (generic_phy_valid(&glue->phy))
++		generic_phy_power_off(&glue->phy);
++
++	glue->enabled = false;
++}
++
++static int mtk_musb_init(struct musb *musb)
++{
++	struct mtk_musb_glue *glue = to_mtk_musb_glue(musb->controller);
++	int ret;
++
++	ret = clk_enable_bulk(&glue->clks);
++	if (ret)
++		return ret;
++
++	if (generic_phy_valid(&glue->phy)) {
++		ret = generic_phy_init(&glue->phy);
++		if (ret)
++			return ret;
++
++		ret = generic_phy_power_on(&glue->phy);
++		if (ret)
++			return ret;
++
++		glue->enabled = true;
++	}
++
++	musb_writew(musb->mregs, MUSB_TXTOGEN, MTK_TOGGLE_EN);
++	musb_writew(musb->mregs, MUSB_RXTOGEN, MTK_TOGGLE_EN);
++	musb_writel(musb->mregs, USB_L1INTM,
++		    TX_INT_STATUS | RX_INT_STATUS | USBCOM_INT_STATUS);
++
++	musb->isr = mtk_musb_interrupt;
++	return 0;
++}
++
++static int mtk_musb_exit(struct musb *musb)
++{
++	struct mtk_musb_glue *glue = to_mtk_musb_glue(musb->controller);
++
++	mtk_musb_disable(musb);
++	if (generic_phy_valid(&glue->phy))
++		generic_phy_exit(&glue->phy);
++	clk_disable_bulk(&glue->clks);
++
++	return 0;
++}
++
++static const struct musb_platform_ops mtk_musb_ops = {
++	.init		= mtk_musb_init,
++	.exit		= mtk_musb_exit,
++	.enable		= mtk_musb_enable,
++	.disable	= mtk_musb_disable,
++};
++
++static struct musb_fifo_cfg mtk_musb_mode_cfg[] = {
++	MUSB_EP_FIFO_SINGLE(1, FIFO_TX, 512),
++	MUSB_EP_FIFO_SINGLE(1, FIFO_RX, 512),
++	MUSB_EP_FIFO_SINGLE(2, FIFO_TX, 512),
++	MUSB_EP_FIFO_SINGLE(2, FIFO_RX, 512),
++	MUSB_EP_FIFO_SINGLE(3, FIFO_TX, 512),
++	MUSB_EP_FIFO_SINGLE(3, FIFO_RX, 512),
++	MUSB_EP_FIFO_SINGLE(4, FIFO_TX, 512),
++	MUSB_EP_FIFO_SINGLE(4, FIFO_RX, 512),
++	MUSB_EP_FIFO_SINGLE(5, FIFO_TX, 512),
++	MUSB_EP_FIFO_SINGLE(5, FIFO_RX, 512),
++	MUSB_EP_FIFO_SINGLE(6, FIFO_TX, 512),
++	MUSB_EP_FIFO_SINGLE(6, FIFO_RX, 512),
++	MUSB_EP_FIFO_SINGLE(7, FIFO_TX, 512),
++	MUSB_EP_FIFO_SINGLE(7, FIFO_RX, 512),
++};
++
++static struct musb_hdrc_config mtk_musb_config = {
++	.fifo_cfg	= mtk_musb_mode_cfg,
++	.fifo_cfg_size	= ARRAY_SIZE(mtk_musb_mode_cfg),
++	.multipoint	= true,
++	.dyn_fifo	= true,
++	.num_eps	= MTK_MUSB_MAX_EP_NUM,
++	.ram_bits	= MTK_MUSB_RAM_BITS,
++};
++
++static int mtk_musb_probe(struct udevice *dev)
++{
++	struct mtk_musb_glue *glue = dev_get_priv(dev);
++	struct musb_host_data *host = &glue->mdata;
++	struct musb_hdrc_platform_data pdata;
++	void *base = dev_read_addr_ptr(dev);
++	int ret;
++#ifdef CONFIG_USB_MUSB_HOST
++	struct usb_bus_priv *priv = dev_get_uclass_priv(dev);
++#endif
++
++	if (!base)
++		return -EINVAL;
++
++	ret = clk_get_bulk(dev, &glue->clks);
++	if (ret && ret != -ENOENT) {
++		dev_err(dev, "failed to get clocks: %d\n", ret);
++		return ret;
++	}
++
++	ret = generic_phy_get_by_index(dev, 0, &glue->phy);
++	if (ret && ret != -ENOENT) {
++		dev_err(dev, "failed to get USB PHY: %d\n", ret);
++		return ret;
++	}
++
++	memset(&pdata, 0, sizeof(pdata));
++	pdata.power = 250;
++	pdata.platform_ops = &mtk_musb_ops;
++	pdata.config = &mtk_musb_config;
++
++#ifdef CONFIG_USB_MUSB_HOST
++	priv->desc_before_addr = true;
++	pdata.mode = MUSB_HOST;
++	host->host = musb_init_controller(&pdata, &glue->dev, base);
++	if (!host->host)
++		return -EIO;
++
++	ret = musb_lowlevel_init(host);
++	if (ret)
++		return ret;
++#else
++	pdata.mode = MUSB_PERIPHERAL;
++	host->host = musb_register(&pdata, &glue->dev, base);
++	if (!host->host)
++		return -EIO;
++#endif
++
++	return 0;
++}
++
++static int mtk_musb_remove(struct udevice *dev)
++{
++	struct mtk_musb_glue *glue = dev_get_priv(dev);
++	struct musb_host_data *host = &glue->mdata;
++
++	if (host->host) {
++		musb_stop(host->host);
++		free(host->host);
++		host->host = NULL;
++	}
++	clk_release_bulk(&glue->clks);
++
++	return 0;
++}
++
++static const struct udevice_id mtk_musb_ids[] = {
++	{ .compatible = "mediatek,mtk-musb" },
++	{ .compatible = "mediatek,mt6789-musb" },
++	{ }
++};
++
++U_BOOT_DRIVER(mediatek_musb) = {
++	.name		= "mediatek_musb",
++#ifdef CONFIG_USB_MUSB_HOST
++	.id		= UCLASS_USB,
++	.ops		= &musb_usb_ops,
++#else
++	.id		= UCLASS_USB_GADGET_GENERIC,
++#endif
++	.of_match	= mtk_musb_ids,
++	.probe		= mtk_musb_probe,
++	.remove		= mtk_musb_remove,
++	.plat_auto	= sizeof(struct usb_plat),
++	.priv_auto	= sizeof(struct mtk_musb_glue),
++};
+-- 
+2.55.0
+
