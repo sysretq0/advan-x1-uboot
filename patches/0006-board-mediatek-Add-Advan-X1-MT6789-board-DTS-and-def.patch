@@ -1,6 +1,6 @@
-From c3bb3a76c7eb19691d4f86a5e8273315b9925197 Mon Sep 17 00:00:00 2001
+From 762c26a0ff18d499ce43aaee64ec2e9c5badfaf1 Mon Sep 17 00:00:00 2001
 From: sysretq0 <324514544+sysretq0@users.noreply.github.com>
-Date: Sat, 21 Nov 2026 18:44:39 +0000
+Date: Sat, 21 Nov 2026 19:39:20 +0000
 Subject: [PATCH] board: mediatek: Add Advan X1 (MT6789) board DTS and
  defconfig
 
@@ -12,8 +12,8 @@ Subject: [PATCH] board: mediatek: Add Advan X1 (MT6789) board DTS and
  board/mediatek/mt6789/Makefile    |   3 +
  board/mediatek/mt6789/mt6789.c    | 138 +++++++++++++++++++
  configs/mt6789_advan_x1_defconfig |  85 ++++++++++++
- include/configs/mt6789.h          |  45 ++++++
- 8 files changed, 629 insertions(+)
+ include/configs/mt6789.h          |  55 ++++++++
+ 8 files changed, 639 insertions(+)
  create mode 100644 arch/arm/dts/mt6789-advan-x1.dts
  create mode 100644 arch/arm/dts/mt6789.dtsi
  create mode 100644 board/mediatek/mt6789/MAINTAINERS
@@ -655,10 +655,10 @@ index 00000000..22e90dec
 +CONFIG_WDT_MTK=y
 diff --git a/include/configs/mt6789.h b/include/configs/mt6789.h
 new file mode 100644
-index 00000000..17ff9b68
+index 00000000..3cecb498
 --- /dev/null
 +++ b/include/configs/mt6789.h
-@@ -0,0 +1,45 @@
+@@ -0,0 +1,55 @@
 +/* SPDX-License-Identifier: GPL-2.0-only */
 +/*
 + * Configuration header for MediaTek MT6789 (Advan X1).
@@ -696,11 +696,21 @@ index 00000000..17ff9b68
 +	"fit_addr_r=0x68000000\0" \
 +	"kernel_comp_addr_r=0x68000000\0" \
 +	"kernel_comp_size=0x03000000\0" \
-+	"bootmenu_0=Boot Mainline Linux (UFS)=bootflow scan -lb\0" \
-+	"bootmenu_1=USB Fastboot Mode=fastboot usb 0\0" \
-+	"bootmenu_2=U-Boot Command Shell=echo Type 'bootmenu' to return\0" \
-+	"bootmenu_3=Reboot=reset\0" \
-+	"bootmenu_4=Power Off=poweroff\0" \
++	"boot_mainline=for lbl in linux_boot boot_linux esp; do " \
++		"if part number scsi 2 ${lbl} bp; then " \
++			"if load scsi 2:${bp} ${scriptaddr} /boot.scr; then " \
++				"setenv devtype scsi; setenv devnum 2; " \
++				"setenv distro_bootpart ${bp}; setenv prefix /; " \
++				"source ${scriptaddr}; " \
++			"fi; " \
++		"fi; " \
++	"done; echo 'No boot.scr found on linux_boot/boot_linux/esp'\0" \
++	"bootmenu_0=Boot Mainline Linux (FIT)=run boot_mainline\0" \
++	"bootmenu_1=Boot UEFI / Scan All=bootflow scan -lb\0" \
++	"bootmenu_2=USB Fastboot Mode=fastboot usb 0\0" \
++	"bootmenu_3=U-Boot Command Shell=echo Type 'bootmenu' to return\0" \
++	"bootmenu_4=Reboot=reset\0" \
++	"bootmenu_5=Power Off=poweroff\0" \
 +	"bootmenu_delay=-1\0"
 +
 +#endif /* __MT6789_H */

@@ -1,6 +1,6 @@
-From 0e7359b221aba15924e8a4b9554879e79f376daf Mon Sep 17 00:00:00 2001
+From 064fe19e983eca7a7d5e79dc5655df59de5cade8 Mon Sep 17 00:00:00 2001
 From: sysretq0 <324514544+sysretq0@users.noreply.github.com>
-Date: Sat, 21 Nov 2026 18:44:38 +0000
+Date: Sat, 21 Nov 2026 19:39:20 +0000
 Subject: [PATCH] power: pmic: mtk-pwrap: Add MT6789 support
 
 ---

@@ -1,6 +1,6 @@
-From fe9d67e85f31fbdfed682c294100c403a8881f21 Mon Sep 17 00:00:00 2001
+From 44ebefc443f248e661becd4100ac039f857eec7f Mon Sep 17 00:00:00 2001
 From: sysretq0 <324514544+sysretq0@users.noreply.github.com>
-Date: Sat, 21 Nov 2026 18:44:39 +0000
+Date: Sat, 21 Nov 2026 19:39:21 +0000
 Subject: [PATCH] video: uclass: Set opaque alpha for 32-bit ARGB console
  colors
 

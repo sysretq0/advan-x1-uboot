@@ -1,6 +1,6 @@
-From 95981f674a30085b1a8c6d268dfe1f659b2c9ed3 Mon Sep 17 00:00:00 2001
+From 204842cc022004b19521d10997dfc80b556e96f4 Mon Sep 17 00:00:00 2001
 From: sysretq0 <324514544+sysretq0@users.noreply.github.com>
-Date: Sat, 21 Nov 2026 18:44:39 +0000
+Date: Sat, 21 Nov 2026 19:39:20 +0000
 Subject: [PATCH] serial: mtk: Avoid hanging when UART TX is gated at EL2
 
 ---

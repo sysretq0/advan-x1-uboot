@@ -1,6 +1,6 @@
-From 33edff9a51805d8b74f3115d6f5088cd404ee55e Mon Sep 17 00:00:00 2001
+From 2ffae1780c64e86d18d3dd5b07214c8e73bb9e36 Mon Sep 17 00:00:00 2001
 From: sysretq0 <324514544+sysretq0@users.noreply.github.com>
-Date: Sat, 21 Nov 2026 18:44:38 +0000
+Date: Sat, 21 Nov 2026 19:39:19 +0000
 Subject: [PATCH] arm: mediatek: Add MT6789 (Helio G99) SoC support
 
 ---

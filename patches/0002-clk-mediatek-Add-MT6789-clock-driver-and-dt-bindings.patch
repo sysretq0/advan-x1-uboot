@@ -1,6 +1,6 @@
-From 75bc098ed101157e496e47f92152499171e87cfc Mon Sep 17 00:00:00 2001
+From 586b8d4935ccadcda3835425cb5c1923eb432a68 Mon Sep 17 00:00:00 2001
 From: sysretq0 <324514544+sysretq0@users.noreply.github.com>
-Date: Sat, 21 Nov 2026 18:44:38 +0000
+Date: Sat, 21 Nov 2026 19:39:19 +0000
 Subject: [PATCH] clk: mediatek: Add MT6789 clock driver and dt-bindings
 
 ---

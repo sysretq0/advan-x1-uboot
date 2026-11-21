@@ -1,6 +1,6 @@
-From f7b214e591eab574682d17bd31d3ff7beaf9a210 Mon Sep 17 00:00:00 2001
+From 2bb9c7876283060c8304f1f10c8d777840597fee Mon Sep 17 00:00:00 2001
 From: sysretq0 <324514544+sysretq0@users.noreply.github.com>
-Date: Sat, 21 Nov 2026 18:44:40 +0000
+Date: Sat, 21 Nov 2026 19:39:21 +0000
 Subject: [PATCH] ufs: Support pre-initialized UFSHCI handoff and safe PRDT
  transfers
 
