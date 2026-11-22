@@ -1,30 +1,38 @@
-From 2b173dd10311847c45bd06a50f03ccf06f7f5829 Mon Sep 17 00:00:00 2001
+From 3606044052af9488810610545c6ba2e4a8ee5369 Mon Sep 17 00:00:00 2001
 From: sysretq0 <324514544+sysretq0@users.noreply.github.com>
-Date: Sat, 21 Nov 2026 19:39:20 +0000
-Subject: [PATCH] button: Add MediaTek KPD matrix and MT6358/MT6366 PMIC key
- drivers
+Date: Sun, 22 Nov 2026 04:55:16 +0000
+Subject: [PATCH] button: Add MediaTek keypad and MT6358 PMIC key drivers
 
+Add UCLASS_BUTTON drivers for MediaTek matrix keypads
+(mediatek,mt6779-keypad / mediatek,mt6789-keypad) using standard
+linux,keymap bindings, and MediaTek MT6358/MT6366 PMIC keys
+(mediatek,mt6358-keys) using standard power/home subnodes with
+linux,keycodes under the parent UCLASS_PMIC pwrap device.
+
+Signed-off-by: sysretq0 <324514544+sysretq0@users.noreply.github.com>
 ---
- drivers/button/Kconfig           |   7 +
+ drivers/button/Kconfig           |   9 ++
  drivers/button/Makefile          |   1 +
- drivers/button/button-mtk-keys.c | 222 +++++++++++++++++++++++++++++++
- 3 files changed, 230 insertions(+)
+ drivers/button/button-mtk-keys.c | 277 +++++++++++++++++++++++++++++++
+ 3 files changed, 287 insertions(+)
  create mode 100644 drivers/button/button-mtk-keys.c
 
 diff --git a/drivers/button/Kconfig b/drivers/button/Kconfig
-index f9a1c3e2..a4084a7b 100644
+index f9a1c3e2..99a138e8 100644
 --- a/drivers/button/Kconfig
 +++ b/drivers/button/Kconfig
-@@ -39,6 +39,13 @@ config BUTTON_GPIO
+@@ -39,6 +39,15 @@ config BUTTON_GPIO
  	  The GPIO driver must used driver model. Buttons are configured using
  	  the device tree.
  
 +config BUTTON_MTK_KEYS
-+	bool "MediaTek KPD and MT6358/MT6366 PMIC keys"
++	bool "MediaTek keypad and MT6358/MT6366 PMIC keys"
 +	depends on BUTTON && ARCH_MEDIATEK
 +	help
-+	  Enable support for MediaTek keypad matrix keys (e.g. Volume Down)
-+	  and MT6358/MT6366 PMIC keys (Power / Home / Volume Up) via pwrap.
++	  Enable UCLASS_BUTTON support for MediaTek SoC matrix keypad keys
++	  (mediatek,mt6779-keypad using standard linux,keymap bindings) and
++	  MT6358/MT6366 PMIC power/home keys (mediatek,mt6358-keys) accessed
++	  through the parent MediaTek PMIC wrapper (pwrap) bus.
 +
  config BUTTON_QCOM_PMIC
  	bool "Qualcomm power button"
@@ -43,33 +51,46 @@ index 336bbc94..ffff3ed7 100644
 \ No newline at end of file
 diff --git a/drivers/button/button-mtk-keys.c b/drivers/button/button-mtk-keys.c
 new file mode 100644
-index 00000000..9f306677
+index 00000000..5556e695
 --- /dev/null
 +++ b/drivers/button/button-mtk-keys.c
-@@ -0,0 +1,222 @@
+@@ -0,0 +1,277 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
-+ * MediaTek KPD matrix and MT6358/MT6366 PMIC button drivers.
++ * MediaTek keypad matrix and MT6358/MT6366 PMIC button drivers.
 + *
-+ * - mediatek,mt6789-kpd: polls active-low matrix key bits in KPD_MEM1..5
-+ *   (base + 0x04 + (bit / 16) * 4), e.g. Volume Down (bit 0) on Advan X1.
-+ * - mediatek,mt6358-keys: polls MT6358/MT6366 TOPSTATUS (0x28) via pwrap
-+ *   for PWRKEY (bit 1) and HOMEKEY / Volume Up (bit 3).
++ * - mediatek,mt6779-keypad: polls active-low matrix key bits in KPD_MEM1..5
++ *   (base + 0x04 + (bit / 16) * 4) using standard linux,keymap bindings.
++ * - mediatek,mt6358-keys: polls MT6358/MT6366 TOPSTATUS (0x28) via parent
++ *   UCLASS_PMIC pwrap for power (bit 1) and home (bit 3) subnodes.
 + */
 +
 +#include <button.h>
 +#include <dm.h>
 +#include <dm/device_compat.h>
 +#include <dm/lists.h>
++#include <malloc.h>
++#include <stdio.h>
++#include <string.h>
 +#include <asm/io.h>
 +#include <dt-bindings/input/linux-event-codes.h>
 +#include <linux/bitops.h>
 +#include <power/pmic.h>
 +
 +#define KPD_MEM1_OFS		0x04
-+#define MT6358_TOPSTATUS	0x28
++#define KPD_SINGLE_COLS		9
++#define KPD_DOUBLE_COLS		13
 +
-+/* ---- MediaTek KPD Matrix Key Driver ---- */
++#define MT6358_TOPSTATUS	0x28
++#define MT6358_PWRKEY_BIT	1
++#define MT6358_HOMEKEY_BIT	3
++
++/* ---- MediaTek Keypad Matrix Driver (mediatek,mt6779-keypad) ---- */
++
++struct mtk_kpd_btn_plat {
++	u32 bit;
++	u32 code;
++};
 +
 +struct mtk_kpd_btn_priv {
 +	void __iomem *base;
@@ -97,6 +118,7 @@ index 00000000..9f306677
 +static int mtk_kpd_btn_probe(struct udevice *dev)
 +{
 +	struct mtk_kpd_btn_priv *priv = dev_get_priv(dev);
++	struct mtk_kpd_btn_plat *plat = dev_get_plat(dev);
 +	struct button_uc_plat *uc_plat = dev_get_uclass_plat(dev);
 +
 +	/* Top-level controller node carries no label */
@@ -107,40 +129,73 @@ index 00000000..9f306677
 +	if (!priv->base)
 +		return -EINVAL;
 +
-+	priv->bit = dev_read_u32_default(dev, "mediatek,kpd-bit", 0);
-+	priv->code = dev_read_u32_default(dev, "linux,code", KEY_VOLUMEDOWN);
++	priv->bit = plat->bit;
++	priv->code = plat->code;
 +
 +	return 0;
 +}
 +
 +static int mtk_kpd_btn_bind(struct udevice *parent)
 +{
-+	ofnode node;
-+	int ret;
++	u32 keys_per_group, *keymap;
++	int size, count, i, ret = 0;
 +
-+	dev_for_each_subnode(node, parent) {
++	/* Child key devices have no DT node */
++	if (!ofnode_valid(dev_ofnode(parent)))
++		return 0;
++
++	size = dev_read_size(parent, "linux,keymap");
++	if (size <= 0 || (size % sizeof(u32)))
++		return 0;
++
++	count = size / sizeof(u32);
++	keymap = malloc(size);
++	if (!keymap)
++		return -ENOMEM;
++
++	ret = dev_read_u32_array(parent, "linux,keymap", keymap, count);
++	if (ret)
++		goto out;
++
++	keys_per_group = dev_read_u32_default(parent, "mediatek,keys-per-group", 1);
++
++	for (i = 0; i < count; i++) {
++		u32 row = (keymap[i] >> 24) & 0xff;
++		u32 col = (keymap[i] >> 16) & 0xff;
++		u32 code = keymap[i] & 0xffff;
 +		struct button_uc_plat *uc_plat;
++		struct mtk_kpd_btn_plat *plat;
 +		struct udevice *dev;
-+		const char *label;
++		char name[24];
++		char *label;
 +
-+		if (!ofnode_is_enabled(node))
-+			continue;
-+
-+		label = ofnode_read_string(node, "label");
-+		if (!label)
-+			label = ofnode_get_name(node);
++		snprintf(name, sizeof(name), "kpd-r%u-c%u", row, col);
++		label = strdup(name);
++		if (!label) {
++			ret = -ENOMEM;
++			goto out;
++		}
 +
 +		ret = device_bind_driver_to_node(parent, "mtk_kpd_btn",
-+						 ofnode_get_name(node),
-+						 node, &dev);
-+		if (ret)
-+			return ret;
++						 label, ofnode_null(), &dev);
++		if (ret) {
++			free(label);
++			goto out;
++		}
++
++		plat = dev_get_plat(dev);
++		plat->bit = (keys_per_group == 2) ?
++			    (row * KPD_DOUBLE_COLS + col * 2) :
++			    (row * KPD_SINGLE_COLS + col);
++		plat->code = code;
 +
 +		uc_plat = dev_get_uclass_plat(dev);
 +		uc_plat->label = label;
 +	}
 +
-+	return 0;
++out:
++	free(keymap);
++	return ret;
 +}
 +
 +static const struct button_ops mtk_kpd_btn_ops = {
@@ -149,7 +204,8 @@ index 00000000..9f306677
 +};
 +
 +static const struct udevice_id mtk_kpd_btn_ids[] = {
-+	{ .compatible = "mediatek,mt6789-kpd" },
++	{ .compatible = "mediatek,mt6789-keypad" },
++	{ .compatible = "mediatek,mt6779-keypad" },
 +	{ }
 +};
 +
@@ -160,6 +216,7 @@ index 00000000..9f306677
 +	.bind		= mtk_kpd_btn_bind,
 +	.probe		= mtk_kpd_btn_probe,
 +	.ops		= &mtk_kpd_btn_ops,
++	.plat_auto	= sizeof(struct mtk_kpd_btn_plat),
 +	.priv_auto	= sizeof(struct mtk_kpd_btn_priv),
 +};
 +
@@ -199,22 +256,29 @@ index 00000000..9f306677
 +{
 +	struct mtk_pmic_btn_priv *priv = dev_get_priv(dev);
 +	struct button_uc_plat *uc_plat = dev_get_uclass_plat(dev);
-+	int ret;
++	const char *name = ofnode_get_name(dev_ofnode(dev));
++	u32 default_code;
 +
 +	if (!uc_plat->label)
 +		return 0;
 +
-+	ret = uclass_get_device_by_phandle(UCLASS_PMIC, dev_get_parent(dev),
-+					   "pmic", &priv->pmic);
-+	if (ret) {
-+		dev_err(dev, "failed to get PMIC device: %d\n", ret);
-+		return ret;
++	/* Key subnodes live under PMIC 'keys', whose parent is UCLASS_PMIC pwrap */
++	priv->pmic = dev_get_parent(dev_get_parent(dev));
++	if (!priv->pmic)
++		return -ENODEV;
++
++	priv->reg = MT6358_TOPSTATUS;
++	if (!strcmp(name, "power")) {
++		priv->bit = MT6358_PWRKEY_BIT;
++		default_code = KEY_POWER;
++	} else if (!strcmp(name, "home")) {
++		priv->bit = MT6358_HOMEKEY_BIT;
++		default_code = KEY_VOLUMEUP;
++	} else {
++		return -EINVAL;
 +	}
 +
-+	priv->reg = dev_read_u32_default(dev, "mediatek,status-reg",
-+					 MT6358_TOPSTATUS);
-+	priv->bit = dev_read_u32_default(dev, "mediatek,status-bit", 1);
-+	priv->code = dev_read_u32_default(dev, "linux,code", KEY_POWER);
++	priv->code = dev_read_u32_default(dev, "linux,keycodes", default_code);
 +
 +	return 0;
 +}
@@ -227,23 +291,22 @@ index 00000000..9f306677
 +	dev_for_each_subnode(node, parent) {
 +		struct button_uc_plat *uc_plat;
 +		struct udevice *dev;
-+		const char *label;
++		const char *name;
 +
 +		if (!ofnode_is_enabled(node))
 +			continue;
 +
-+		label = ofnode_read_string(node, "label");
-+		if (!label)
-+			label = ofnode_get_name(node);
++		name = ofnode_get_name(node);
++		if (strcmp(name, "power") && strcmp(name, "home"))
++			continue;
 +
 +		ret = device_bind_driver_to_node(parent, "mtk_pmic_btn",
-+						 ofnode_get_name(node),
-+						 node, &dev);
++						 name, node, &dev);
 +		if (ret)
 +			return ret;
 +
 +		uc_plat = dev_get_uclass_plat(dev);
-+		uc_plat->label = label;
++		uc_plat->label = name;
 +	}
 +
 +	return 0;

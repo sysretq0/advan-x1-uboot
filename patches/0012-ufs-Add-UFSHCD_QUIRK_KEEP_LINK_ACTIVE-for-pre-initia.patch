@@ -1,0 +1,115 @@
+From 095045b8c7039332fca75edf7da8613d8333fd1d Mon Sep 17 00:00:00 2001
+From: sysretq0 <324514544+sysretq0@users.noreply.github.com>
+Date: Sun, 22 Nov 2026 04:59:20 +0000
+Subject: [PATCH] ufs: Add UFSHCD_QUIRK_KEEP_LINK_ACTIVE for pre-initialized
+ handoff
+
+Add UFSHCD_QUIRK_KEEP_LINK_ACTIVE to support chainloading U-Boot when
+an earlier bootloader stage has already initialized UFSHCI and brought
+up the UniPro link. When enabled and the controller reports both
+CONTROLLER_ENABLE and DEVICE_PRESENT, ufshcd_probe() quiesces the
+prior-stage UTRL/UTMRL run/stop queues, installs U-Boot's descriptor
+lists, verifies device readiness, and caps max_bytes_per_req to 128 KiB,
+falling back to a full reset/init on failure.
+
+Enable this quirk in ufs-mediatek when the controller and device are
+already active at init time.
+
+Signed-off-by: sysretq0 <324514544+sysretq0@users.noreply.github.com>
+---
+ drivers/ufs/ufs-mediatek.c |  6 +++++-
+ drivers/ufs/ufs-uclass.c   | 43 ++++++++++++++++++++++++++++++++++++++
+ drivers/ufs/ufs.h          |  6 ++++++
+ 3 files changed, 54 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/ufs/ufs-mediatek.c b/drivers/ufs/ufs-mediatek.c
+index cda36ac8..d801453d 100644
+--- a/drivers/ufs/ufs-mediatek.c
++++ b/drivers/ufs/ufs-mediatek.c
+@@ -332,7 +332,11 @@ static int ufs_mtk_init(struct ufs_hba *hba)
+ 		}
+ 	}
+ 
+-	ufs_mtk_setup_ref_clk(hba, true);
++	if ((ufshcd_readl(hba, REG_CONTROLLER_ENABLE) & CONTROLLER_ENABLE) &&
++	    (ufshcd_readl(hba, REG_CONTROLLER_STATUS) & DEVICE_PRESENT))
++		hba->quirks |= UFSHCD_QUIRK_KEEP_LINK_ACTIVE;
++	else
++		ufs_mtk_setup_ref_clk(hba, true);
+ 	ufs_mtk_get_hw_ip_version(hba);
+ 
+ 	return 0;
+diff --git a/drivers/ufs/ufs-uclass.c b/drivers/ufs/ufs-uclass.c
+index e00c1a44..67526261 100644
+--- a/drivers/ufs/ufs-uclass.c
++++ b/drivers/ufs/ufs-uclass.c
+@@ -2318,6 +2318,49 @@ int ufshcd_probe(struct udevice *ufs_dev, struct ufs_hba_ops *hba_ops)
+ 
+ 	mb(); /* flush previous writes */
+ 
++	/*
++	 * If a previous bootloader stage already brought up UFSHCI and the
++	 * UniPro link is live, quiesce its UTRL/UTMRL queues and hand over
++	 * to U-Boot's descriptor lists without resetting HCE or M-PHY.
++	 */
++	if ((hba->quirks & UFSHCD_QUIRK_KEEP_LINK_ACTIVE) &&
++	    (ufshcd_readl(hba, REG_CONTROLLER_ENABLE) & CONTROLLER_ENABLE) &&
++	    ufshcd_is_device_present(hba)) {
++		struct ufs_dev_desc card = {0};
++
++		ufshcd_writel(hba, 0, REG_UTP_TRANSFER_REQ_LIST_RUN_STOP);
++		ufshcd_writel(hba, 0, REG_UTP_TASK_REQ_LIST_RUN_STOP);
++		/* Ensure run/stop clears reach hardware before polling */
++		wmb();
++
++		err = ufshcd_wait_for_register(hba,
++					       REG_UTP_TRANSFER_REQ_LIST_RUN_STOP,
++					       UTP_TRANSFER_REQ_LIST_RUN_STOP_BIT,
++					       0, 100);
++		if (!err)
++			err = ufshcd_wait_for_register(hba,
++						       REG_UTP_TASK_REQ_LIST_RUN_STOP,
++						       UTP_TASK_REQ_LIST_RUN_STOP_BIT,
++						       0, 100);
++		if (!err)
++			err = ufshcd_make_hba_operational(hba);
++		if (!err)
++			err = ufshcd_verify_dev_init(hba);
++		if (!err) {
++			ufshcd_init_desc_sizes(hba);
++			err = ufs_get_device_desc(hba, &card);
++		}
++		if (!err) {
++			/* Keep each UTP transfer within one PRDT entry (128 KiB) */
++			scsi_plat->max_bytes_per_req = 128 * 1024;
++			return 0;
++		}
++
++		dev_warn(hba->dev,
++			 "Pre-initialized UFS handoff failed (%d), falling back to full init\n",
++			 err);
++	}
++
+ 	/* Reset the attached device */
+ 	err = ufshcd_vops_device_reset(hba);
+ 	if (err) {
+diff --git a/drivers/ufs/ufs.h b/drivers/ufs/ufs.h
+index 9f557356..f1784426 100644
+--- a/drivers/ufs/ufs.h
++++ b/drivers/ufs/ufs.h
+@@ -694,6 +694,12 @@ enum ufshcd_quirks {
+ 	 * single doorbell mode.
+ 	 */
+ 	UFSHCD_QUIRK_BROKEN_LSDBS_CAP			= 1 << 25,
++
++	/*
++	 * Keep a pre-initialized UFSHCI controller and UniPro link active
++	 * when chainloaded from an earlier bootloader stage.
++	 */
++	UFSHCD_QUIRK_KEEP_LINK_ACTIVE			= 1 << 26,
+ };
+ 
+ struct ufs_hba {
+-- 
+2.55.0
+

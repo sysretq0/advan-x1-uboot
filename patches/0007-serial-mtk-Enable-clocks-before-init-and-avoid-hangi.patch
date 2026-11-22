@@ -1,0 +1,89 @@
+From 40e594b3099db4e0a5e252d45f0e99f7342d605b Mon Sep 17 00:00:00 2001
+From: sysretq0 <324514544+sysretq0@users.noreply.github.com>
+Date: Sun, 22 Nov 2026 04:56:01 +0000
+Subject: [PATCH] serial: mtk: Enable clocks before init and avoid hanging on
+ gated UART
+
+Enable the baud and bus clocks in mtk_serial_probe() before accessing
+UART registers, and check UART_LSR_THRE with a 1 ms readl_poll_timeout().
+When the UART is gated or firewall-locked by an earlier secure stage
+(such as ATF BL31 kernel-stage transition), mark TX disabled so
+serial_putc() does not spin indefinitely returning -EAGAIN.
+
+Signed-off-by: sysretq0 <324514544+sysretq0@users.noreply.github.com>
+---
+ drivers/serial/serial_mtk.c | 23 +++++++++++++++++++++--
+ 1 file changed, 21 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/serial/serial_mtk.c b/drivers/serial/serial_mtk.c
+index 16e4fc08..3d5266f6 100644
+--- a/drivers/serial/serial_mtk.c
++++ b/drivers/serial/serial_mtk.c
+@@ -20,6 +20,7 @@
+ #include <asm/io.h>
+ #include <asm/types.h>
+ #include <linux/err.h>
++#include <linux/iopoll.h>
+ #include <linux/printk.h>
+ 
+ struct mtk_serial_regs {
+@@ -97,6 +98,7 @@ struct mtk_serial_priv {
+ 	u32 fixed_clk_rate;
+ 	bool force_highspeed;
+ 	bool upstream_highspeed_logic;
++	bool tx_disabled;
+ };
+ 
+ static const unsigned short fraction_l_mapping[] = {
+@@ -182,6 +184,12 @@ set_baud:
+ 
+ static int _mtk_serial_putc(struct mtk_serial_priv *priv, const char ch)
+ {
++	if (priv->tx_disabled) {
++		if (!(readl(&priv->regs->lsr) & UART_LSR_THRE))
++			return 0;
++		priv->tx_disabled = false;
++	}
++
+ 	if (!(readl(&priv->regs->lsr) & UART_LSR_THRE))
+ 		return -EAGAIN;
+ 
+@@ -205,6 +213,8 @@ static int _mtk_serial_pending(struct mtk_serial_priv *priv, bool input)
+ {
+ 	if (input)
+ 		return (readl(&priv->regs->lsr) & UART_LSR_DR) ? 1 : 0;
++	else if (priv->tx_disabled)
++		return 0;
+ 	else
+ 		return (readl(&priv->regs->lsr) & UART_LSR_THRE) ? 0 : 1;
+ }
+@@ -252,6 +262,10 @@ static int mtk_serial_pending(struct udevice *dev, bool input)
+ static int mtk_serial_probe(struct udevice *dev)
+ {
+ 	struct mtk_serial_priv *priv = dev_get_priv(dev);
++	u32 val;
++
++	clk_enable(&priv->clk);
++	clk_enable(&priv->clk_bus);
+ 
+ 	/* Disable interrupt */
+ 	writel(0, &priv->regs->ier);
+@@ -259,8 +273,13 @@ static int mtk_serial_probe(struct udevice *dev)
+ 	writel(UART_MCRVAL, &priv->regs->mcr);
+ 	writel(UART_FCRVAL, &priv->regs->fcr);
+ 
+-	clk_enable(&priv->clk);
+-	clk_enable(&priv->clk_bus);
++	/*
++	 * Detect a gated or firewall-locked UART (e.g. after ATF BL31
++	 * kernel-stage transition) so serial_putc() does not spin forever
++	 * on -EAGAIN when LSR_THRE never asserts.
++	 */
++	if (readl_poll_timeout(&priv->regs->lsr, val, val & UART_LSR_THRE, 1000))
++		priv->tx_disabled = true;
+ 
+ 	return 0;
+ }
+-- 
+2.55.0
+

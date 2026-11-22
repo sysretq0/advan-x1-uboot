@@ -1,20 +1,26 @@
-From 18f1dccc99974a453530de8168f34a5552a00a1d Mon Sep 17 00:00:00 2001
+From 911c78d7e8c8a726320edf5615abc8694c4e9049 Mon Sep 17 00:00:00 2001
 From: sysretq0 <324514544+sysretq0@users.noreply.github.com>
-Date: Sat, 21 Nov 2026 19:39:20 +0000
+Date: Sun, 22 Nov 2026 04:53:23 +0000
 Subject: [PATCH] usb: musb-new: Add generic MediaTek MUSB glue driver
 
+Add a generic MediaTek MUSB host/gadget glue driver supporting
+MT6789 (Helio G99) and compatible MediaTek SoCs using DM clock bulk,
+generic PHY (phy-mtk-tphy), and MediaTek L1 write-1-to-clear
+interrupt semantics.
+
+Signed-off-by: sysretq0 <324514544+sysretq0@users.noreply.github.com>
 ---
- drivers/usb/musb-new/Kconfig    |   8 +
+ drivers/usb/musb-new/Kconfig    |  10 ++
  drivers/usb/musb-new/Makefile   |   1 +
- drivers/usb/musb-new/mediatek.c | 277 ++++++++++++++++++++++++++++++++
- 3 files changed, 286 insertions(+)
+ drivers/usb/musb-new/mediatek.c | 274 ++++++++++++++++++++++++++++++++
+ 3 files changed, 285 insertions(+)
  create mode 100644 drivers/usb/musb-new/mediatek.c
 
 diff --git a/drivers/usb/musb-new/Kconfig b/drivers/usb/musb-new/Kconfig
 index 208e47d8..f4e90746 100644
 --- a/drivers/usb/musb-new/Kconfig
 +++ b/drivers/usb/musb-new/Kconfig
-@@ -59,6 +59,14 @@ config USB_MUSB_DSPS
+@@ -59,6 +59,16 @@ config USB_MUSB_DSPS
  	bool "TI DSPS platforms"
  	depends on ARCH_OMAP2PLUS
  
@@ -24,7 +30,9 @@ index 208e47d8..f4e90746 100644
 +	select USB_MUSB_PIO_ONLY
 +	help
 +	  Enable support for MediaTek MUSB OTG/peripheral controllers paired
-+	  with generic MediaTek T-PHY (e.g. MT6789 / Helio G99).
++	  with the generic MediaTek T-PHY driver (e.g. MT6789 / Helio G99).
++	  This glue driver handles MediaTek L1 write-1-to-clear interrupt
++	  status registers, bulk clock control, and generic PHY lifecycle.
 +
  config USB_MUSB_MT85XX
  	bool "Enable Mediatek MT85XX DRC USB controller"
@@ -43,10 +51,10 @@ index 6638772d..ee9cb9e7 100644
  obj-$(CONFIG_USB_MUSB_PIC32) += pic32.o
 diff --git a/drivers/usb/musb-new/mediatek.c b/drivers/usb/musb-new/mediatek.c
 new file mode 100644
-index 00000000..836a1b01
+index 00000000..359329c8
 --- /dev/null
 +++ b/drivers/usb/musb-new/mediatek.c
-@@ -0,0 +1,277 @@
+@@ -0,0 +1,274 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Generic MediaTek MUSB glue driver (MT6789 / Helio G99 and compatible SoCs).
@@ -245,9 +253,6 @@ index 00000000..836a1b01
 +	struct musb_hdrc_platform_data pdata;
 +	void *base = dev_read_addr_ptr(dev);
 +	int ret;
-+#ifdef CONFIG_USB_MUSB_HOST
-+	struct usb_bus_priv *priv = dev_get_uclass_priv(dev);
-+#endif
 +
 +	if (!base)
 +		return -EINVAL;
@@ -269,22 +274,24 @@ index 00000000..836a1b01
 +	pdata.platform_ops = &mtk_musb_ops;
 +	pdata.config = &mtk_musb_config;
 +
-+#ifdef CONFIG_USB_MUSB_HOST
-+	priv->desc_before_addr = true;
-+	pdata.mode = MUSB_HOST;
-+	host->host = musb_init_controller(&pdata, &glue->dev, base);
-+	if (!host->host)
-+		return -EIO;
++	if (IS_ENABLED(CONFIG_USB_MUSB_HOST)) {
++		struct usb_bus_priv *priv = dev_get_uclass_priv(dev);
 +
-+	ret = musb_lowlevel_init(host);
-+	if (ret)
-+		return ret;
-+#else
-+	pdata.mode = MUSB_PERIPHERAL;
-+	host->host = musb_register(&pdata, &glue->dev, base);
-+	if (!host->host)
-+		return -EIO;
-+#endif
++		priv->desc_before_addr = true;
++		pdata.mode = MUSB_HOST;
++		host->host = musb_init_controller(&pdata, &glue->dev, base);
++		if (!host->host)
++			return -EIO;
++
++		ret = musb_lowlevel_init(host);
++		if (ret)
++			return ret;
++	} else {
++		pdata.mode = MUSB_PERIPHERAL;
++		host->host = musb_register(&pdata, &glue->dev, base);
++		if (!host->host)
++			return -EIO;
++	}
 +
 +	return 0;
 +}
@@ -312,12 +319,10 @@ index 00000000..836a1b01
 +
 +U_BOOT_DRIVER(mediatek_musb) = {
 +	.name		= "mediatek_musb",
-+#ifdef CONFIG_USB_MUSB_HOST
-+	.id		= UCLASS_USB,
-+	.ops		= &musb_usb_ops,
-+#else
-+	.id		= UCLASS_USB_GADGET_GENERIC,
-+#endif
++	.id		= IS_ENABLED(CONFIG_USB_MUSB_HOST) ?
++			  UCLASS_USB : UCLASS_USB_GADGET_GENERIC,
++	.ops		= IS_ENABLED(CONFIG_USB_MUSB_HOST) ?
++			  &musb_usb_ops : NULL,
 +	.of_match	= mtk_musb_ids,
 +	.probe		= mtk_musb_probe,
 +	.remove		= mtk_musb_remove,

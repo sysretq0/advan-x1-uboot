@@ -1,15 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Advan X1 (MediaTek MT6789 / Helio G99) U-Boot Device Tree.
- *
- * All memory windows, display geometry, keypad/PMIC mappings, and peripheral
- * addresses are derived directly from verified Advan X1 stock artifacts
- * (loki & advan-x1-mainline).
  */
 
 /dts-v1/;
 
-#include <dt-bindings/input/linux-event-codes.h>
+#include <dt-bindings/input/input.h>
 #include "mt6789.dtsi"
 
 / {
@@ -27,10 +23,9 @@
 		ranges;
 
 		/*
-		 * Stock LK DSI video-mode framebuffer (Chipone ICNL9922C,
-		 * 1080x2460 visible, 1088px = 4352B stride, 2464 total lines).
-		 * board_fix_fdt() updates reg to the live OVL0_L0_ADDR before
-		 * simplefb probes.
+		 * Pre-initialized DSI video-mode framebuffer (1080x2460 visible,
+		 * 1088px = 4352B stride, 2464 total lines). board_fix_fdt()
+		 * updates reg to the active OVL0_L0_ADDR before simplefb probes.
 		 */
 		framebuffer@fe007000 {
 			compatible = "simple-framebuffer";
@@ -44,10 +39,9 @@
 	};
 
 	/*
-	 * Verified clean DRAM windows from live /proc/iomem and MT6789 mblock
-	 * reservations:
+	 * Clean DRAM windows outside secure/EMI-MPU mblock reservations:
 	 *   - Bank 0: 0x60000000..0x6EFFFFFF (240 MiB, U-Boot & kernel staging)
-	 *   - Bank 1: 0x140000000..0x2296FFFFF (3.64 GiB clean high RAM)
+	 *   - Bank 1: 0x140000000..0x2296FFFFF (3.64 GiB high RAM)
 	 */
 	memory@60000000 {
 		device_type = "memory";
@@ -70,39 +64,17 @@
 			no-map;
 		};
 	};
-
-	pmic_keys: pmic-keys {
-		compatible = "mediatek,mt6366-keys", "mediatek,mt6358-keys";
-		pmic = <&pwrap>;
-
-		button-power {
-			label = "Power";
-			linux,code = <KEY_POWER>;
-			mediatek,status-reg = <0x28>;
-			mediatek,status-bit = <1>;
-		};
-
-		button-volup {
-			label = "Volume Up";
-			linux,code = <KEY_VOLUMEUP>;
-			mediatek,status-reg = <0x28>;
-			mediatek,status-bit = <3>;
-		};
-	};
 };
 
 &uart0 {
 	status = "okay";
 };
 
-&keypad {
+&keyboard {
+	keypad,num-rows = <1>;
+	keypad,num-columns = <1>;
+	linux,keymap = <MATRIX_KEY(0, 0, KEY_VOLUMEDOWN)>;
 	status = "okay";
-
-	button-voldown {
-		label = "Volume Down";
-		linux,code = <KEY_VOLUMEDOWN>;
-		mediatek,kpd-bit = <0>;
-	};
 };
 
 &pwrap {
@@ -110,6 +82,18 @@
 
 	pmic: pmic {
 		compatible = "mediatek,mt6366", "mediatek,mt6358";
+
+		keys {
+			compatible = "mediatek,mt6358-keys";
+
+			power {
+				linux,keycodes = <KEY_POWER>;
+			};
+
+			home {
+				linux,keycodes = <KEY_VOLUMEUP>;
+			};
+		};
 	};
 };
 

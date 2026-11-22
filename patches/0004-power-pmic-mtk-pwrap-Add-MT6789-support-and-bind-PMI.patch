@@ -1,0 +1,62 @@
+From b063c483795cf3646ba4292628fc8b49b800a803 Mon Sep 17 00:00:00 2001
+From: sysretq0 <324514544+sysretq0@users.noreply.github.com>
+Date: Sun, 22 Nov 2026 04:52:42 +0000
+Subject: [PATCH] power: pmic: mtk-pwrap: Add MT6789 support and bind PMIC keys
+
+Add the mediatek,mt6789-pwrap compatible string (using the MT8195
+register map) and bind an optional 'keys' subnode under the PMIC
+child node so standard Linux PMIC key bindings (mediatek,mt6358-keys)
+probe as children of the UCLASS_PMIC pwrap device.
+
+Signed-off-by: sysretq0 <324514544+sysretq0@users.noreply.github.com>
+---
+ drivers/power/pmic/mtk-pwrap.c | 12 +++++++++++-
+ 1 file changed, 11 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/power/pmic/mtk-pwrap.c b/drivers/power/pmic/mtk-pwrap.c
+index 468af1fb..61da7727 100644
+--- a/drivers/power/pmic/mtk-pwrap.c
++++ b/drivers/power/pmic/mtk-pwrap.c
+@@ -10,6 +10,7 @@
+ #include <clk.h>
+ #include <dm.h>
+ #include <dm/device_compat.h>
++#include <dm/lists.h>
+ #include <linux/bitfield.h>
+ #include <linux/err.h>
+ #include <power/pmic.h>
+@@ -803,7 +804,7 @@ static int mtk_pwrap_probe(struct udevice *dev)
+ 
+ static int mtk_pwrap_bind(struct udevice *dev)
+ {
+-	ofnode pmic_node, regulators_node;
++	ofnode pmic_node, regulators_node, keys_node;
+ 	int children;
+ 	const struct pmic_child_info *pmic_children_info;
+ 
+@@ -834,6 +835,14 @@ static int mtk_pwrap_bind(struct udevice *dev)
+ 		dev_dbg(dev, "regulators subnode not found\n");
+ 	}
+ 
++	keys_node = ofnode_find_subnode(pmic_node, "keys");
++	if (ofnode_valid(keys_node) && ofnode_is_enabled(keys_node)) {
++		int ret = lists_bind_fdt(dev, keys_node, NULL, NULL, false);
++
++		if (ret && ret != -ENOENT)
++			dev_dbg(dev, "failed to bind PMIC keys: %d\n", ret);
++	}
++
+ 	return 0;
+ }
+ 
+@@ -885,6 +894,7 @@ static const struct pmic_wrapper_type pwrap_mt8365 = {
+ };
+ 
+ static const struct udevice_id mtk_pwrap_ids[] = {
++	{ .compatible = "mediatek,mt6789-pwrap", .data = (ulong)&pwrap_mt8195 },
+ 	{ .compatible = "mediatek,mt8195-pwrap", .data = (ulong)&pwrap_mt8195 },
+ 	{ .compatible = "mediatek,mt8365-pwrap", .data = (ulong)&pwrap_mt8365 },
+ 	{ .compatible = "mediatek,mt8366-pwrap", .data = (ulong)&pwrap_mt8195 },
+-- 
+2.55.0
+

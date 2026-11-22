@@ -1,0 +1,165 @@
+From 2591e64e663d1b947d8ace31f7d5834a583ee24d Mon Sep 17 00:00:00 2001
+From: sysretq0 <324514544+sysretq0@users.noreply.github.com>
+Date: Sun, 22 Nov 2026 04:58:33 +0000
+Subject: [PATCH] ufs: Guard unallocated UTMRL and harden UTP command
+ completion
+
+hba->utmrdl is not allocated by ufshcd_memory_alloc(); avoid writing a
+NULL address into REG_UTP_TASK_REQ_LIST_BASE_{L,H} and enabling the
+task request run/stop register when hba->utmrdl is NULL.
+
+In ufshcd_send_command() and ufs_scsi_exec():
+- Clear stale UTP_TRANSFER_REQ_COMPL before ringing the doorbell and
+  wait for the doorbell bit to clear before reading DMA buffers.
+- Skip zero-length cache maintenance calls and check the return value
+  of ufshcd_send_command().
+- Retry once on transient SCSI UNIT ATTENTION (sense key 0x06).
+
+Signed-off-by: sysretq0 <324514544+sysretq0@users.noreply.github.com>
+---
+ drivers/ufs/ufs-uclass.c | 70 ++++++++++++++++++++++++++++++++--------
+ 1 file changed, 56 insertions(+), 14 deletions(-)
+
+diff --git a/drivers/ufs/ufs-uclass.c b/drivers/ufs/ufs-uclass.c
+index 2ca4fb2a..e00c1a44 100644
+--- a/drivers/ufs/ufs-uclass.c
++++ b/drivers/ufs/ufs-uclass.c
+@@ -419,8 +419,9 @@ static inline int ufshcd_get_lists_status(u32 reg)
+  */
+ static void ufshcd_enable_run_stop_reg(struct ufs_hba *hba)
+ {
+-	ufshcd_writel(hba, UTP_TASK_REQ_LIST_RUN_STOP_BIT,
+-		      REG_UTP_TASK_REQ_LIST_RUN_STOP);
++	if (hba->utmrdl)
++		ufshcd_writel(hba, UTP_TASK_REQ_LIST_RUN_STOP_BIT,
++			      REG_UTP_TASK_REQ_LIST_RUN_STOP);
+ 	ufshcd_writel(hba, UTP_TRANSFER_REQ_LIST_RUN_STOP_BIT,
+ 		      REG_UTP_TRANSFER_REQ_LIST_RUN_STOP);
+ }
+@@ -471,10 +472,15 @@ static int ufshcd_make_hba_operational(struct ufs_hba *hba)
+ 		      REG_UTP_TRANSFER_REQ_LIST_BASE_L);
+ 	ufshcd_writel(hba, upper_32_bits(dev_phys_to_bus(hba->dev, (phys_addr_t)(uintptr_t)(hba->utrdl))),
+ 		      REG_UTP_TRANSFER_REQ_LIST_BASE_H);
+-	ufshcd_writel(hba, lower_32_bits(dev_phys_to_bus(hba->dev, (phys_addr_t)(uintptr_t)(hba->utmrdl))),
+-		      REG_UTP_TASK_REQ_LIST_BASE_L);
+-	ufshcd_writel(hba, upper_32_bits(dev_phys_to_bus(hba->dev, (phys_addr_t)(uintptr_t)(hba->utmrdl))),
+-		      REG_UTP_TASK_REQ_LIST_BASE_H);
++	if (hba->utmrdl) {
++		dma_addr_t utmrdl = dev_phys_to_bus(hba->dev,
++						    (phys_addr_t)(uintptr_t)hba->utmrdl);
++
++		ufshcd_writel(hba, lower_32_bits(utmrdl),
++			      REG_UTP_TASK_REQ_LIST_BASE_L);
++		ufshcd_writel(hba, upper_32_bits(utmrdl),
++			      REG_UTP_TASK_REQ_LIST_BASE_H);
++	}
+ 
+ 	/*
+ 	 * Make sure base address and interrupt setup are updated before
+@@ -914,8 +920,14 @@ static int ufshcd_send_command(struct ufs_hba *hba, unsigned int task_tag)
+ 	unsigned long start;
+ 	u32 intr_status;
+ 	u32 enabled_intr_status;
++	u32 db_mask = 1U << task_tag;
+ 
+-	ufshcd_writel(hba, 1 << task_tag, REG_UTP_TRANSFER_REQ_DOOR_BELL);
++	/* Clear any stale transfer completion interrupt before ringing doorbell */
++	ufshcd_writel(hba, UTP_TRANSFER_REQ_COMPL, REG_INTERRUPT_STATUS);
++	/* Ensure interrupt status clear completes before writing doorbell */
++	wmb();
++
++	ufshcd_writel(hba, db_mask, REG_UTP_TRANSFER_REQ_DOOR_BELL);
+ 
+ 	/* Make sure doorbell reg is updated before reading interrupt status */
+ 	wmb();
+@@ -924,13 +936,16 @@ static int ufshcd_send_command(struct ufs_hba *hba, unsigned int task_tag)
+ 	do {
+ 		intr_status = ufshcd_readl(hba, REG_INTERRUPT_STATUS);
+ 		enabled_intr_status = intr_status & hba->intr_mask;
+-		ufshcd_writel(hba, intr_status, REG_INTERRUPT_STATUS);
++		if (intr_status)
++			ufshcd_writel(hba, intr_status, REG_INTERRUPT_STATUS);
+ 
+ 		if (hba->max_pwr_info.info.pwr_rx != SLOWAUTO_MODE &&
+ 		    hba->max_pwr_info.info.pwr_tx != SLOWAUTO_MODE) {
+ 			if (get_timer(start) > QUERY_REQ_TIMEOUT) {
+ 				dev_err(hba->dev,
+-					"Timedout waiting for UTP response\n");
++					"Timedout waiting for UTP response (db=0x%x is=0x%x)\n",
++					ufshcd_readl(hba, REG_UTP_TRANSFER_REQ_DOOR_BELL),
++					intr_status);
+ 				return -ETIMEDOUT;
+ 			}
+ 		}
+@@ -941,7 +956,16 @@ static int ufshcd_send_command(struct ufs_hba *hba, unsigned int task_tag)
+ 
+ 			return -1;
+ 		}
+-	} while (!(enabled_intr_status & UTP_TRANSFER_REQ_COMPL));
++	} while ((ufshcd_readl(hba, REG_UTP_TRANSFER_REQ_DOOR_BELL) & db_mask) &&
++		 !(enabled_intr_status & UTP_TRANSFER_REQ_COMPL));
++
++	/* Ensure the doorbell bit has fully cleared before reading DMA buffers */
++	while (ufshcd_readl(hba, REG_UTP_TRANSFER_REQ_DOOR_BELL) & db_mask) {
++		if (get_timer(start) > QUERY_REQ_TIMEOUT) {
++			dev_err(hba->dev, "Timedout waiting for UTRLDBR clear\n");
++			return -ETIMEDOUT;
++		}
++	}
+ 
+ 	return 0;
+ }
+@@ -1679,7 +1703,9 @@ static int ufs_scsi_exec(struct udevice *scsi_dev, struct scsi_cmd *pccb)
+ 	u32 upiu_flags;
+ 	int ocs, result = 0;
+ 	u8 scsi_status;
++	int retries = 1;
+ 
++retry:
+ 	pccb->status = 0;
+ 	pccb->sensedatalen = 0;
+ 
+@@ -1687,11 +1713,15 @@ static int ufs_scsi_exec(struct udevice *scsi_dev, struct scsi_cmd *pccb)
+ 	ufshcd_prepare_utp_scsi_cmd_upiu(hba, pccb, upiu_flags);
+ 	prepare_prdt_table(hba, pccb);
+ 
+-	ufshcd_cache_flush(pccb->pdata, pccb->datalen);
++	if (pccb->datalen)
++		ufshcd_cache_flush(pccb->pdata, pccb->datalen);
+ 
+-	ufshcd_send_command(hba, TASK_TAG);
++	result = ufshcd_send_command(hba, TASK_TAG);
++	if (result)
++		return result;
+ 
+-	ufshcd_cache_invalidate(pccb->pdata, pccb->datalen);
++	if (pccb->datalen)
++		ufshcd_cache_invalidate(pccb->pdata, pccb->datalen);
+ 
+ 	ocs = ufshcd_get_tr_ocs(hba);
+ 	switch (ocs) {
+@@ -1704,8 +1734,20 @@ static int ufs_scsi_exec(struct udevice *scsi_dev, struct scsi_cmd *pccb)
+ 			scsi_status = result & MASK_SCSI_STATUS;
+ 			if (scsi_status) {
+ 				pccb->status = scsi_status;
+-				if (scsi_status == S_CHECK_COND)
++				if (scsi_status == S_CHECK_COND) {
+ 					ufs_scsi_copy_sense(hba, pccb);
++					if (retries-- > 0 &&
++					    pccb->sensedatalen >= 3 &&
++					    (pccb->sense_buf[2] & 0x0f) == 0x06)
++						goto retry;
++				}
++				dev_dbg(hba->dev,
++					"scsi status=0x%02x (cmd=0x%02x lun=%d sk=0x%x asc=0x%x)\n",
++					scsi_status, pccb->cmd[0], pccb->lun,
++					pccb->sensedatalen >= 3 ?
++						(pccb->sense_buf[2] & 0x0f) : 0,
++					pccb->sensedatalen >= 13 ?
++						pccb->sense_buf[12] : 0);
+ 				return -EINVAL;
+ 			}
+ 
+-- 
+2.55.0
+

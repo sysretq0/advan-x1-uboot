@@ -1,0 +1,97 @@
+From 5d4831d7e67e4fcd34263cbd06a421f995ef073d Mon Sep 17 00:00:00 2001
+From: sysretq0 <324514544+sysretq0@users.noreply.github.com>
+Date: Sun, 22 Nov 2026 04:57:23 +0000
+Subject: [PATCH] efi_loader: gop: Respect video line_length stride and
+ A8R8G8B8 alpha
+
+Derive EFI GOP pixels_per_scanline from video_priv->line_length when
+provided instead of assuming pixels_per_scanline == width, and use
+pixels_per_scanline for source/destination video row stride in
+gop_blt_int() so EFI applications render cleanly on padded-stride
+framebuffers (e.g. 1080px visible width with 1088px scanout pitch).
+
+Also preserve opaque alpha (0xff000000) for 32-bit blits when the
+backing video format is VIDEO_A8R8G8B8.
+
+Signed-off-by: sysretq0 <324514544+sysretq0@users.noreply.github.com>
+---
+ lib/efi_loader/efi_gop.c | 23 ++++++++++++++++-------
+ 1 file changed, 16 insertions(+), 7 deletions(-)
+
+diff --git a/lib/efi_loader/efi_gop.c b/lib/efi_loader/efi_gop.c
+index ae44d140..da8b97ea 100644
+--- a/lib/efi_loader/efi_gop.c
++++ b/lib/efi_loader/efi_gop.c
+@@ -25,6 +25,7 @@ static const efi_guid_t efi_gop_guid = EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID;
+  * @mode:	graphical output mode
+  * @vdev:	backing video device
+  * @bpix:	bits per pixel
++ * @format:	pixel format of the backing video device
+  * @fb:		frame buffer
+  */
+ struct efi_gop_obj {
+@@ -35,6 +36,7 @@ struct efi_gop_obj {
+ 	struct udevice *vdev;
+ 	/* Fields we only have access to during init */
+ 	u32 bpix;
++	enum video_format format;
+ 	void *fb;
+ };
+ 
+@@ -172,7 +174,7 @@ static __always_inline efi_status_t gop_blt_int(struct efi_gop *this,
+ 		break;
+ 	case EFI_BLT_VIDEO_TO_BLT_BUFFER:
+ 	case EFI_BLT_VIDEO_TO_VIDEO:
+-		swidth = gopobj->info.width;
++		swidth = gopobj->info.pixels_per_scanline;
+ 		if (!vid_bpp)
+ 			return EFI_UNSUPPORTED;
+ 		break;
+@@ -185,7 +187,7 @@ static __always_inline efi_status_t gop_blt_int(struct efi_gop *this,
+ 	case EFI_BLT_BUFFER_TO_VIDEO:
+ 	case EFI_BLT_VIDEO_FILL:
+ 	case EFI_BLT_VIDEO_TO_VIDEO:
+-		dwidth = gopobj->info.width;
++		dwidth = gopobj->info.pixels_per_scanline;
+ 		if (!vid_bpp)
+ 			return EFI_UNSUPPORTED;
+ 		break;
+@@ -230,14 +232,19 @@ static __always_inline efi_status_t gop_blt_int(struct efi_gop *this,
+ 			case EFI_BLT_BUFFER_TO_VIDEO:
+ 			case EFI_BLT_VIDEO_FILL:
+ 			case EFI_BLT_VIDEO_TO_VIDEO:
+-				if (vid_bpp == 32)
+-					fb32[dlineoff + j + dx] = *(u32 *)&pix;
+-				else if (vid_bpp == 30)
++				if (vid_bpp == 32) {
++					u32 val = *(u32 *)&pix;
++
++					if (gopobj->format == VIDEO_A8R8G8B8)
++						val |= 0xff000000U;
++					fb32[dlineoff + j + dx] = val;
++				} else if (vid_bpp == 30) {
+ 					fb32[dlineoff + j + dx] =
+ 						efi_blt_col_to_vid30(&pix);
+-				else
++				} else {
+ 					fb16[dlineoff + j + dx] =
+ 						efi_blt_col_to_vid16(&pix);
++				}
+ 				break;
+ 			}
+ 		}
+@@ -550,8 +557,10 @@ efi_status_t efi_gop_register(void)
+ 		gopobj->info.pixel_bitmask[1] = 0x07e0; /* green */
+ 		gopobj->info.pixel_bitmask[2] = 0x001f; /* blue */
+ 	}
+-	gopobj->info.pixels_per_scanline = col;
++	gopobj->info.pixels_per_scanline =
++		priv->line_length ? priv->line_length / VNBYTES(bpix) : col;
+ 	gopobj->bpix = bpix;
++	gopobj->format = format;
+ 	gopobj->fb = priv->fb;
+ 	gopobj->vdev = vdev;
+ 
+-- 
+2.55.0
+

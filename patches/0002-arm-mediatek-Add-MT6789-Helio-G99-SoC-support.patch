@@ -1,28 +1,65 @@
-From 2ffae1780c64e86d18d3dd5b07214c8e73bb9e36 Mon Sep 17 00:00:00 2001
+From ef32579213bee18ea6e9560057d99fb078f258f1 Mon Sep 17 00:00:00 2001
 From: sysretq0 <324514544+sysretq0@users.noreply.github.com>
-Date: Sat, 21 Nov 2026 19:39:19 +0000
+Date: Sun, 22 Nov 2026 04:51:15 +0000
 Subject: [PATCH] arm: mediatek: Add MT6789 (Helio G99) SoC support
 
+Add core SoC initialization, TrustZone/EMI-MPU-safe ARMv8 memory map,
+and low-level boot framebuffer address capture for MediaTek MT6789
+(Helio G99 / MT8781).
+
+Secure EL3 (BL31), TrustZone TEE, SSPM, SCP/SPM/MCUPM, and RKP windows
+are left unmapped in mt6789_mem_map[] to prevent Cortex-A76 speculative
+prefetch bus firewall faults, and get_page_table_size() reserves 256 KiB
+so runtime 4 KiB-aligned simple-framebuffer remapping can split 2 MiB
+block descriptors cleanly.
+
+Signed-off-by: sysretq0 <324514544+sysretq0@users.noreply.github.com>
 ---
- arch/arm/mach-mediatek/Kconfig         |  11 ++
- arch/arm/mach-mediatek/Makefile        |   3 +
- arch/arm/mach-mediatek/mt6789/Makefile |   3 +
- arch/arm/mach-mediatek/mt6789/init.c   | 139 +++++++++++++++++++++++++
- 4 files changed, 156 insertions(+)
+ arch/arm/include/asm/arch-mediatek/mt6789.h   |  13 ++
+ arch/arm/mach-mediatek/Kconfig                |  14 +++
+ arch/arm/mach-mediatek/Makefile               |   3 +
+ arch/arm/mach-mediatek/mt6789/Makefile        |   3 +
+ arch/arm/mach-mediatek/mt6789/init.c          | 114 ++++++++++++++++++
+ arch/arm/mach-mediatek/mt6789/lowlevel_init.S |  24 ++++
+ 6 files changed, 171 insertions(+)
+ create mode 100644 arch/arm/include/asm/arch-mediatek/mt6789.h
  create mode 100644 arch/arm/mach-mediatek/mt6789/Makefile
  create mode 100644 arch/arm/mach-mediatek/mt6789/init.c
+ create mode 100644 arch/arm/mach-mediatek/mt6789/lowlevel_init.S
 
+diff --git a/arch/arm/include/asm/arch-mediatek/mt6789.h b/arch/arm/include/asm/arch-mediatek/mt6789.h
+new file mode 100644
+index 00000000..a045e2ce
+--- /dev/null
++++ b/arch/arm/include/asm/arch-mediatek/mt6789.h
+@@ -0,0 +1,13 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++/*
++ * MediaTek MT6789 (Helio G99 / MT8781) architecture helpers.
++ */
++
++#ifndef __ASM_ARCH_MT6789_H
++#define __ASM_ARCH_MT6789_H
++
++#include <linux/types.h>
++
++extern u32 mt6789_boot_fb;
++
++#endif /* __ASM_ARCH_MT6789_H */
 diff --git a/arch/arm/mach-mediatek/Kconfig b/arch/arm/mach-mediatek/Kconfig
-index cd841098..689505cd 100644
+index cd841098..e1d8ab31 100644
 --- a/arch/arm/mach-mediatek/Kconfig
 +++ b/arch/arm/mach-mediatek/Kconfig
-@@ -9,6 +9,15 @@ config SYS_VENDOR
+@@ -9,6 +9,18 @@ config SYS_VENDOR
  choice
  	prompt "MediaTek board select"
  
 +config TARGET_MT6789
 +	bool "MediaTek MT6789 (Helio G99) SoC"
 +	select ARM64
++	select ARM_PSCI_FW
++	select SYSRESET
++	select SYSRESET_PSCI
 +	help
 +	  The MediaTek MT6789 (Helio G99 / MT8781) is an ARM64 SoC with two
 +	  Cortex-A76 performance cores and six Cortex-A55 efficiency cores,
@@ -32,7 +69,7 @@ index cd841098..689505cd 100644
  config TARGET_MT7622
  	bool "MediaTek MT7622 SoC"
  	select ARM64
-@@ -187,6 +196,7 @@ endif
+@@ -187,6 +199,7 @@ endif
  
  config SYS_BOARD
  	string "Board name"
@@ -40,7 +77,7 @@ index cd841098..689505cd 100644
  	default "mt7622" if TARGET_MT7622
  	default "mt7623" if TARGET_MT7623
  	default "mt7629" if TARGET_MT7629
-@@ -205,6 +215,7 @@ config SYS_BOARD
+@@ -205,6 +218,7 @@ config SYS_BOARD
  	  be used.
  
  config SYS_CONFIG_NAME
@@ -69,27 +106,25 @@ index 661fc0b8..b4ce84db 100644
  obj-$(CONFIG_TARGET_MT7629) += mt7629/
 diff --git a/arch/arm/mach-mediatek/mt6789/Makefile b/arch/arm/mach-mediatek/mt6789/Makefile
 new file mode 100644
-index 00000000..b9a1e6b6
+index 00000000..dbbff0ae
 --- /dev/null
 +++ b/arch/arm/mach-mediatek/mt6789/Makefile
 @@ -0,0 +1,3 @@
-+# SPDX-License-Identifier: GPL-2.0
++# SPDX-License-Identifier: GPL-2.0-only
 +
-+obj-y += init.o
++obj-y += init.o lowlevel_init.o
 diff --git a/arch/arm/mach-mediatek/mt6789/init.c b/arch/arm/mach-mediatek/mt6789/init.c
 new file mode 100644
-index 00000000..14e3b120
+index 00000000..59531da2
 --- /dev/null
 +++ b/arch/arm/mach-mediatek/mt6789/init.c
-@@ -0,0 +1,139 @@
+@@ -0,0 +1,114 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * MediaTek MT6789 (Helio G99 / MT8781) SoC initialization and memory map.
 + *
-+ * Physical memory map derived from verified MT6789 mblock reservations and
-+ * live /proc/iomem audits on Advan X1 (8 GiB LPDDR4X). Secure EL3 (BL31),
-+ * TrustZone TEE (Kinibi), SSPM, SCP/SPM/MCUPM, and RKP windows are
-+ * deliberately left unmapped so Cortex-A76 speculative accesses cannot
++ * Secure EL3 (BL31), TrustZone TEE, SSPM, SCP/SPM/MCUPM, and RKP windows
++ * are deliberately left unmapped so Cortex-A76 speculative accesses cannot
 + * trigger bus firewall SErrors.
 + */
 +
@@ -99,7 +134,6 @@ index 00000000..14e3b120
 +#include <stdio.h>
 +#include <asm/armv8/mmu.h>
 +#include <asm/global_data.h>
-+#include <asm/system.h>
 +#include <linux/kernel.h>
 +#include <linux/sizes.h>
 +
@@ -124,9 +158,9 @@ index 00000000..14e3b120
 +	},
 +	{
 +		/*
-+		 * Mid DRAM: U-Boot staging/relocation & Linux bundle.
-+		 * Starts above aee_lk/stock LK (0x50700000..0x51000000) and
-+		 * stops before TrustZone TEE (0x70000000). EMI-MPU firewalled
++		 * Mid DRAM: U-Boot staging/relocation & Linux payload.
++		 * Starts above prior-stage bootloader memory (0x50700000..0x51000000)
++		 * and stops before TrustZone TEE (0x70000000). EMI-MPU firewalled
 +		 * modem/SCP/SSPM/RKP windows in 0x70000000..0xFDFFFFFF are
 +		 * deliberately left unmapped.
 +		 */
@@ -136,7 +170,7 @@ index 00000000..14e3b120
 +		.attrs = PTE_BLOCK_MEMTYPE(MT_NORMAL) | PTE_BLOCK_OUTER_SHARE,
 +	},
 +	{
-+		/* Stock LK DSI video-mode framebuffer (0xFE007000 / 0xFEA41000) */
++		/* Pre-initialized DSI video-mode framebuffer window */
 +		.virt = 0xfe000000UL,
 +		.phys = 0xfe000000UL,
 +		.size = 0x02000000UL,
@@ -145,7 +179,7 @@ index 00000000..14e3b120
 +			 PTE_BLOCK_PXN | PTE_BLOCK_UXN,
 +	},
 +	{
-+		/* Verified clean high DRAM window (3.64 GiB) */
++		/* High DRAM window above 4 GiB */
 +		.virt = 0x140000000UL,
 +		.phys = 0x140000000UL,
 +		.size = 0x0e9700000UL,
@@ -158,21 +192,6 @@ index 00000000..14e3b120
 +
 +struct mm_region *mem_map = mt6789_mem_map;
 +
-+/*
-+ * Active framebuffer physical address handed off in x0 by Stage-1 LK
-+ * (stored in .data so clear_bss does not wipe it before board_fix_fdt).
-+ */
-+u32 mt6789_boot_fb __section(".data");
-+
-+__asm__(
-+	".globl save_boot_params\n"
-+	"save_boot_params:\n"
-+	"	adrp	x9, mt6789_boot_fb\n"
-+	"	add	x9, x9, :lo12:mt6789_boot_fb\n"
-+	"	str	w0, [x9]\n"
-+	"	b	save_boot_params_ret\n"
-+);
-+
 +int mach_cpu_init(void)
 +{
 +	return 0;
@@ -181,9 +200,9 @@ index 00000000..14e3b120
 +u64 get_page_table_size(void)
 +{
 +	/*
-+	 * Reserve generous page-table space (64 tables) so simplefb's runtime
-+	 * mmu_map_region() on the 4 KiB-aligned framebuffer (0xFE007000) can
-+	 * split 2 MiB blocks into L3 pages without exhausting tlb_fillptr.
++	 * Reserve 256 KiB (64 page tables) so simplefb's runtime
++	 * mmu_map_region() on a 4 KiB-aligned framebuffer can split 2 MiB
++	 * blocks into L3 pages without exhausting tlb_fillptr.
 +	 */
 +	return SZ_256K;
 +}
@@ -202,25 +221,48 @@ index 00000000..14e3b120
 +{
 +	/*
 +	 * Keep U-Boot relocation, malloc pool, and stack strictly inside the
-+	 * verified clean low-4G window (0x60000000..0x6F000000) so U-Boot
-+	 * never touches TrustZone TEE (0x70000000) or the live LK framebuffer
-+	 * (0xFE007000), and DMA buffers stay 32-bit addressable.
++	 * low-4G clean DRAM window (0x60000000..0x6F000000) so U-Boot never
++	 * touches TrustZone TEE (0x70000000) or the active framebuffer, and
++	 * DMA buffers remain 32-bit addressable.
 +	 */
-+	return min(gd->ram_top, (phys_addr_t)0x6f000000UL);
++	return min_t(phys_addr_t, gd->ram_top, 0x6f000000UL);
 +}
-+
-+#if !CONFIG_IS_ENABLED(SYSRESET)
-+void reset_cpu(void)
-+{
-+	psci_system_reset();
-+}
-+#endif
 +
 +int print_cpuinfo(void)
 +{
 +	printf("CPU:   MediaTek MT6789 (Helio G99)\n");
 +	return 0;
 +}
+diff --git a/arch/arm/mach-mediatek/mt6789/lowlevel_init.S b/arch/arm/mach-mediatek/mt6789/lowlevel_init.S
+new file mode 100644
+index 00000000..bd66a3e9
+--- /dev/null
++++ b/arch/arm/mach-mediatek/mt6789/lowlevel_init.S
+@@ -0,0 +1,24 @@
++/* SPDX-License-Identifier: GPL-2.0-only */
++/*
++ * Low-level boot parameter capture for MediaTek MT6789.
++ *
++ * Stash the active framebuffer physical address passed in x0 by an earlier
++ * bootloader stage in .data so BSS zeroing does not wipe it before
++ * board_fix_fdt() runs.
++ */
++
++#include <linux/linkage.h>
++
++.section .data
++.align 2
++.globl mt6789_boot_fb
++mt6789_boot_fb:
++	.word	0
++
++.section .text
++ENTRY(save_boot_params)
++	adrp	x9, mt6789_boot_fb
++	add	x9, x9, :lo12:mt6789_boot_fb
++	str	w0, [x9]
++	b	save_boot_params_ret
++ENDPROC(save_boot_params)
 -- 
 2.55.0
 

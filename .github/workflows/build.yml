@@ -1,0 +1,47 @@
+name: Build Upstream U-Boot (Advan X1 / MT6789)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout advan-x1-uboot
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc bison build-essential device-tree-compiler flex \
+            gcc-aarch64-linux-gnu libssl-dev python3-setuptools \
+            python3-pyelftools swig uuid-dev libgnutls28-dev
+
+      - name: Verify patch series and checkpatch
+        env:
+          UPSTREAM: ${{ runner.temp }}/u-boot-upstream
+          WORK: ${{ runner.temp }}/u-boot-worktree
+        run: ./scripts/build.sh verify
+
+      - name: Build u-boot.bin
+        env:
+          UPSTREAM: ${{ runner.temp }}/u-boot-upstream
+          WORK: ${{ runner.temp }}/u-boot-worktree
+          OUT: ${{ github.workspace }}/build
+          JOBS: 4
+        run: ./scripts/build.sh
+
+      - name: Upload U-Boot build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: advan-x1-uboot
+          path: |
+            build/u-boot.bin
+            build/u-boot.dtb
+            build/sha256sums.txt
+          retention-days: 30

@@ -7,7 +7,7 @@
 #
 # Usage:
 #   ./scripts/build.sh              # Build u-boot.bin on worktree
-#   ./scripts/build.sh verify       # Dry-run verify all patches apply cleanly on pristine base
+#   ./scripts/build.sh verify       # Verify all patches apply cleanly + checkpatch
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
@@ -15,7 +15,7 @@ UPSTREAM="${UPSTREAM:-/work/bootloader/u-boot-upstream}"
 WORK="${WORK:-/work/bootloader/u-boot-worktree}"
 OUT="${OUT:-$REPO/build}"
 BASE_COMMIT="c1958b5f6cce03956d309ce422b5d9f819955d4a"
-JOBS="${JOBS:-2}"
+JOBS="${JOBS:-1}"
 MODE="${1:-build}"
 
 # Max payload capacity inside 4 MiB lk.img subpartition at 0x210000:
@@ -24,17 +24,19 @@ MAX_UBOOT_BYTES=1966080  # 1.875 MiB (matches CHAINLOAD_MAX_SIZE in loki payload
 
 if [ ! -d "$UPSTREAM/.git" ]; then
     echo "[*] Cloning pristine upstream U-Boot..."
-    git clone --depth 1 https://github.com/u-boot/u-boot.git "$UPSTREAM"
+    git init "$UPSTREAM"
+    git -C "$UPSTREAM" remote add origin https://github.com/u-boot/u-boot.git
+    git -C "$UPSTREAM" fetch --depth 1 origin "$BASE_COMMIT"
+    git -C "$UPSTREAM" checkout --detach FETCH_HEAD
 fi
 
 if [ ! -e "$WORK/.git" ]; then
     git -C "$UPSTREAM" worktree prune
     rm -rf "$WORK"
-    git -C "$UPSTREAM" worktree add --detach "$WORK" HEAD
+    git -C "$UPSTREAM" worktree add --detach "$WORK" "$BASE_COMMIT"
 else
     git -C "$WORK" reset --hard HEAD
     git -C "$WORK" clean -fdx
-    # Reset back to upstream base commit if patches were already applied
     if git -C "$WORK" rev-parse --verify "${BASE_COMMIT}^{commit}" >/dev/null 2>&1; then
         git -C "$WORK" checkout --detach "$BASE_COMMIT"
     else
@@ -43,14 +45,26 @@ else
 fi
 
 echo "== Applying patch series onto pristine upstream U-Boot =="
+PATCH_COUNT=0
 for p in "$REPO"/patches/*.patch; do
     [ -e "$p" ] || { echo "No patches found!"; exit 1; }
     echo "  apply $(basename "$p")"
-    git -C "$WORK" apply --whitespace=nowarn "$p"
+    git -C "$WORK" apply --whitespace=error "$p"
+    PATCH_COUNT=$((PATCH_COUNT + 1))
 done
+echo "== Applied $PATCH_COUNT patches cleanly =="
 
 if [ "$MODE" = "verify" ]; then
-    echo "== All patches applied cleanly to pristine upstream U-Boot =="
+    if [ -x "$WORK/scripts/checkpatch.pl" ]; then
+        echo "== Running U-Boot checkpatch.pl =="
+        for p in "$REPO"/patches/*.patch; do
+            perl "$WORK/scripts/checkpatch.pl" --no-tree --quiet "$p" || {
+                echo "checkpatch flagged $(basename "$p"):"
+                perl "$WORK/scripts/checkpatch.pl" --no-tree "$p" | grep -E "ERROR:|CHECK:" && exit 1 || true
+            }
+        done
+    fi
+    echo "== Verification OK ($PATCH_COUNT patches) =="
     exit 0
 fi
 
@@ -72,5 +86,5 @@ if [ "$SIZE" -gt "$MAX_UBOOT_BYTES" ]; then
     echo "FATAL: u-boot.bin ($SIZE bytes) exceeds Loki subpartition cap ($MAX_UBOOT_BYTES bytes)!"
     exit 1
 fi
-sha256sum "$UBOOT_BIN" "$OUT/u-boot.dtb"
+(cd "$OUT" && sha256sum u-boot.bin u-boot.dtb > sha256sums.txt && cat sha256sums.txt)
 echo "== Build OK (fits cleanly in Loki 0x210000 subpartition) =="
