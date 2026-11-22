@@ -1,0 +1,107 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sysretq0 <324514544+sysretq0@users.noreply.github.com>
+Date: Sun, 22 Nov 2026 07:47:00 +0000
+Subject: [PATCH] disk: part_efi: Reject out-of-bounds GPT partition entries
+
+Validate that each GPT partition table entry has
+starting_lba <= ending_lba and lies within the backing block device
+capacity (ending_lba <= desc->lba - 1), matching Linux's
+block/partitions/efi.c is_pte_valid().
+
+Without this check, GPT tables containing intentionally parked or
+disabled entries placed beyond the end of the disk pass partition
+lookup and trigger out-of-range block reads (and spurious
+"** fs_devread read error **" logs) during bootstd scanning and
+filesystem probing.
+
+Signed-off-by: sysretq0 <324514544+sysretq0@users.noreply.github.com>
+---
+ disk/part_efi.c | 28 +++++++++++++++++-----------
+ 1 file changed, 17 insertions(+), 11 deletions(-)
+
+diff --git a/disk/part_efi.c b/disk/part_efi.c
+index d8751297..8fc4cee7 100644
+--- a/disk/part_efi.c
++++ b/disk/part_efi.c
+@@ -57,7 +57,7 @@ static int is_gpt_valid(struct blk_desc *desc, u64 lba, gpt_header *pgpt_head,
+ 			gpt_entry **pgpt_pte);
+ static gpt_entry *alloc_read_gpt_entries(struct blk_desc *desc,
+ 					 gpt_header *pgpt_head);
+-static int is_pte_valid(gpt_entry * pte);
++static int is_pte_valid(const gpt_entry *pte, u64 lastlba);
+ static int find_valid_gpt(struct blk_desc *desc, gpt_header *gpt_head,
+ 			  gpt_entry **pgpt_pte);
+ 
+@@ -231,7 +231,7 @@ int part_get_gpt_pte(struct blk_desc *desc, int part, gpt_entry *gpt_e)
+ 		return -EINVAL;
+ 
+ 	if (part > le32_to_cpu(gpt_head->num_partition_entries) ||
+-	    !is_pte_valid(&gpt_pte[part - 1])) {
++	    !desc->lba || !is_pte_valid(&gpt_pte[part - 1], desc->lba - 1)) {
+ 		log_debug("Invalid partition number %d\n", part);
+ 		free(gpt_pte);
+ 		return -EPERM;
+@@ -263,7 +263,7 @@ static void __maybe_unused part_print_efi(struct blk_desc *desc)
+ 
+ 	for (i = 0; i < le32_to_cpu(gpt_head->num_partition_entries); i++) {
+ 		/* Skip invalid PTE */
+-		if (!is_pte_valid(&gpt_pte[i]))
++		if (!desc->lba || !is_pte_valid(&gpt_pte[i], desc->lba - 1))
+ 			continue;
+ 
+ 		printf("%3d\t0x%08llx\t0x%08llx\t\"%s\"\n", (i + 1),
+@@ -1209,35 +1209,41 @@ static gpt_entry *alloc_read_gpt_entries(struct blk_desc *desc,
+ }
+ 
+ /**
+- * is_pte_valid(): validates a single Partition Table Entry
+- * @gpt_entry - Pointer to a single Partition Table Entry
++ * is_pte_valid() - validates a single Partition Table Entry
++ * @pte: Pointer to a single Partition Table Entry
++ * @lastlba: Last valid logical block address on the block device
+  *
+- * Description: returns 1 if valid,  0 on error.
++ * Description: returns 1 if valid, 0 on error.
+  */
+-static int is_pte_valid(gpt_entry * pte)
++static int is_pte_valid(const gpt_entry *pte, u64 lastlba)
+ {
+ 	efi_guid_t unused_guid;
++	u64 start, end;
+ 
+ 	if (!pte) {
+ 		log_debug("Invalid Argument(s)\n");
+ 		return 0;
+ 	}
+ 
+-	/* Only one validation for now:
+-	 * The GUID Partition Type != Unused Entry (ALL-ZERO)
+-	 */
++	/* Check that the GUID Partition Type != Unused Entry (ALL-ZERO) */
+ 	memset(unused_guid.b, 0, sizeof(unused_guid.b));
+ 
+ 	if (memcmp(pte->partition_type_guid.b, unused_guid.b,
+-		sizeof(unused_guid.b)) == 0) {
+-
++		   sizeof(unused_guid.b)) == 0) {
+ 		log_debug("Found an unused PTE GUID at 0x%08X\n",
+ 			  (unsigned int)(uintptr_t)pte);
++		return 0;
++	}
+ 
++	start = le64_to_cpu(pte->starting_lba);
++	end = le64_to_cpu(pte->ending_lba);
++	if (start > end || start > lastlba || end > lastlba) {
++		log_debug("Found out-of-bounds PTE (0x%llx..0x%llx, lastlba 0x%llx)\n",
++			  start, end, lastlba);
+ 		return 0;
+-	} else {
+-		return 1;
+ 	}
++
++	return 1;
+ }
+ 
+ /*
+-- 
+2.55.0

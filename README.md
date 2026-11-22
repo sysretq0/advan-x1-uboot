@@ -5,7 +5,7 @@ Clean, upstream-grade patch series on pristine **U-Boot** (base commit `c1958b5f
 ## Architecture
 
 - **Execution Model**: Standalone position-independent AArch64 U-Boot (`CONFIG_POSITION_INDEPENDENT=y`, `CONFIG_TEXT_BASE=0x60000000`) running with ARM Trusted Firmware (BL31 @ `0x48200000`) resident in EL3 for PSCI (`CPU_ON`, `SYSTEM_RESET`, `SYSTEM_OFF`) and MediaTek SiP services (`MTK_SIP_KERNEL_UFS_CONTROL`).
-- **Exception Level**: Supports both Non-Secure **EL1** and Non-Secure **EL2** (when `loki pack --unlock-el2` is enabled for KVM).
+- **Exception Level**: Supports both Non-Secure **EL1** and Non-Secure **EL2** (handed off via ATF BL31 `MTK_SIP_KERNEL_BOOT_AARCH64`).
 - **Safe Physical Memory Map**: Explicitly leaves Secure EL3 (`BL31 @ 0x48200000`), TrustZone Kinibi TEE (`0x70000000..0x7FFFFFFF`), SSPM (`0x9FD60000`), SCP/SPM/MCUPM (`0xBF000000`), and RKP (`0xD0000000`) **unmapped** in `mt6789_mem_map[]`, preventing Cortex-A76 speculative prefetch SErrors. Relocation is clamped inside the clean `0x60000000..0x6F000000` window.
 - **Live Display Handoff**: `board_fix_fdt()` queries `OVL0_L0_ADDR` (`0x14005F40`) before DM video probe, clears prior-stage overlay planes to transparent (`alpha=0`), and patches `simple-framebuffer` (`1080×2460`, stride `4352` bytes, `a8r8g8b8`) in-place to the active scanout buffer.
 
@@ -40,6 +40,7 @@ Clean, upstream-grade patch series on pristine **U-Boot** (base commit `c1958b5f
 12. `0012-ufs-Add-UFSHCD_QUIRK_KEEP_LINK_ACTIVE-for-pre-initia.patch`
 13. `0013-arm-dts-mediatek-Add-MT6789-SoC-device-tree.patch`
 14. `0014-board-mediatek-Add-Advan-X1-MT6789-board-support.patch`
+15. `0015-disk-part_efi-Reject-out-of-bounds-GPT-partition-ent.patch`
 
 ## Verifying, Building & Packing with Loki
 
@@ -54,7 +55,6 @@ Clean, upstream-grade patch series on pristine **U-Boot** (base commit `c1958b5f
 ./loki pack devices/mt6789/advan_x1_v5.json \
     --lk /path/to/stock/lk.img \
     --payload uboot/build/u-boot.bin \
-    --unlock-el2 \
     -o build/lk_loki_advan_x1_v5.img
 ```
 
