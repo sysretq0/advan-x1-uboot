@@ -319,7 +319,7 @@ new file mode 100644
 index 00000000..90721020
 --- /dev/null
 +++ b/configs/mt6789_advan_x1_defconfig
-@@ -0,0 +1,62 @@
+@@ -0,0 +1,66 @@
 +CONFIG_ARM=y
 +CONFIG_COUNTER_FREQUENCY=13000000
 +CONFIG_POSITION_INDEPENDENT=y
@@ -336,13 +336,15 @@ index 00000000..90721020
 +CONFIG_OF_BOARD_FIXUP=y
 +CONFIG_FIT=y
 +CONFIG_BOOTSTD_FULL=y
-+CONFIG_BOOTCOMMAND="bootmenu"
++CONFIG_BOOTCOMMAND="run menucmd"
 +CONFIG_PRE_CONSOLE_BUFFER=y
 +CONFIG_BOARD_LATE_INIT=y
 +CONFIG_CMD_BOOTMENU=y
 +CONFIG_CMD_CLK=y
 +CONFIG_CMD_GPT=y
++CONFIG_CMD_POWEROFF=y
 +CONFIG_CMD_UFS=y
++CONFIG_CMD_PAUSE=y
 +CONFIG_CMD_SYSBOOT=y
 +CONFIG_CMD_PMIC=y
 +CONFIG_BOUNCE_BUFFER=y
@@ -366,6 +368,7 @@ index 00000000..90721020
 +CONFIG_BAUDRATE=921600
 +CONFIG_DM_SERIAL=y
 +CONFIG_MTK_SERIAL=y
++CONFIG_SYSRESET_CMD_POWEROFF=y
 +CONFIG_USB=y
 +CONFIG_USB_MUSB_GADGET=y
 +CONFIG_USB_MUSB_MTK=y
@@ -373,6 +376,7 @@ index 00000000..90721020
 +CONFIG_USB_GADGET_MANUFACTURER="Advan"
 +CONFIG_USB_GADGET_VENDOR_NUM=0x0e8d
 +CONFIG_USB_GADGET_PRODUCT_NUM=0x201c
++CONFIG_USB_FUNCTION_ACM=y
 +CONFIG_UFS=y
 +CONFIG_UFS_MEDIATEK=y
 +CONFIG_VIDEO=y
@@ -387,7 +391,7 @@ new file mode 100644
 index 00000000..7957ea9f
 --- /dev/null
 +++ b/include/configs/mt6789.h
-@@ -0,0 +1,48 @@
+@@ -0,0 +1,57 @@
 +/* SPDX-License-Identifier: GPL-2.0-only */
 +/*
 + * Configuration header for MediaTek MT6789 (Advan X1).
@@ -425,12 +429,21 @@ index 00000000..7957ea9f
 +	"fit_addr_r=0x68000000\0" \
 +	"kernel_comp_addr_r=0x68000000\0" \
 +	"kernel_comp_size=0x03000000\0" \
++	"menucmd=bootmenu -1\0" \
 +	"bootmenu_0=Boot Mainline Linux=" \
-+		"bootmeth order script extlinux; bootflow scan -lb\0" \
-+	"bootmenu_1=Boot UEFI / Scan All=" \
-+		"bootmeth order efi efi_mgr script extlinux; bootflow scan -lb\0" \
-+	"bootmenu_2=USB Fastboot Mode=fastboot usb 0\0" \
-+	"bootmenu_3=U-Boot Command Shell=echo Type 'bootmenu' to return\0" \
++		"bootmeth order script extlinux; " \
++		"bootflow scan -lb; pause; run menucmd\0" \
++	"bootmenu_1=Boot UEFI=" \
++		"bootmeth order efi efi_mgr; " \
++		"bootflow scan -lb; pause; run menucmd\0" \
++	"bootmenu_2=USB Fastboot Mode=" \
++		"echo Starting USB Fastboot (scsi 2)...; " \
++		"fastboot usb 0; pause; run menucmd\0" \
++	"bootmenu_3=USB Serial Console=" \
++		"setenv stdin serial,button-kbd,usbacm; " \
++		"setenv stdout serial,vidconsole,usbacm; " \
++		"setenv stderr serial,vidconsole,usbacm; " \
++		"echo USB CDC-ACM console active (run menucmd to return)\0" \
 +	"bootmenu_4=Reboot=reset\0" \
 +	"bootmenu_5=Power Off=poweroff\0" \
 +	"bootmenu_delay=-1\0"

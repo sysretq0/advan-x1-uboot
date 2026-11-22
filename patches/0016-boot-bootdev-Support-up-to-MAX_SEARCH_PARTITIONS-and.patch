@@ -1,0 +1,61 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sysretq0 <324514544+sysretq0@users.noreply.github.com>
+Date: Sun, 22 Nov 2026 09:08:00 +0000
+Subject: [PATCH] boot: bootdev: Support up to MAX_SEARCH_PARTITIONS and
+ unmarked GPT disks
+
+Raise MAX_PART_PER_BOOTDEV from 30 to MAX_SEARCH_PARTITIONS (128) and
+allow iter->part == MAX_PART_PER_BOOTDEV so bootstd can scan high-numbered
+GPT partitions such as those found on Android A/B UFS/eMMC devices (where
+ESP and Linux boot partitions commonly sit above partition 60).
+
+When BOOTFLOWIF_ONLY_BOOTABLE is set and part_get_bootable() finds at
+least one partition marked bootable or ESP (first_bootable > 0), keep
+scanning only marked partitions. When no partition on the disk carries a
+bootable/ESP flag (first_bootable == 0), scan all valid partitions
+instead of restricting the scan to partition 1.
+
+Signed-off-by: sysretq0 <324514544+sysretq0@users.noreply.github.com>
+---
+ boot/bootdev-uclass.c | 11 +++++------
+ 1 file changed, 5 insertions(+), 6 deletions(-)
+
+diff --git a/boot/bootdev-uclass.c b/boot/bootdev-uclass.c
+index 55e1a6c4..e3b4a3a7 100644
+--- a/boot/bootdev-uclass.c
++++ b/boot/bootdev-uclass.c
+@@ -24,10 +24,10 @@
+ enum {
+ 	/*
+ 	 * Set some sort of limit on the number of partitions a bootdev can
+-	 * have. Note that for disks this limits the partitions numbers that
+-	 * are scanned to 1..MAX_BOOTFLOWS_PER_BOOTDEV
++	 * have. Note that for disks this limits the partition numbers that
++	 * are scanned to 1..MAX_PART_PER_BOOTDEV.
+ 	 */
+-	MAX_PART_PER_BOOTDEV	= 30,
++	MAX_PART_PER_BOOTDEV	= MAX_SEARCH_PARTITIONS,
+ 
+ 	/* Maximum supported length of the "boot_targets" env string */
+ 	BOOT_TARGETS_MAX_LEN	= 100,
+@@ -102,7 +102,7 @@ int bootdev_find_in_blk(struct udevice *dev, struct udevice *blk,
+ 	int ret;
+ 
+ 	/* Sanity check */
+-	if (iter->part >= MAX_PART_PER_BOOTDEV)
++	if (iter->part > MAX_PART_PER_BOOTDEV)
+ 		return log_msg_ret("max", -ESHUTDOWN);
+ 
+ 	bflow->blk = blk;
+@@ -169,8 +169,7 @@ int bootdev_find_in_blk(struct udevice *dev, struct udevice *blk,
+ 
+ 	/* if there are bootable partitions, scan only those */
+ 	} else if ((iter->flags & BOOTFLOWIF_ONLY_BOOTABLE) &&
+-		   iter->first_bootable >= 0 &&
+-		   (iter->first_bootable ? !info.bootable : iter->part != 1)) {
++		   iter->first_bootable > 0 && !info.bootable) {
+ 		log_debug("Skipping non-bootable partition %d\n", iter->part);
+ 		return log_msg_ret("boot", -EINVAL);
+ 	} else {
+-- 
+2.55.0

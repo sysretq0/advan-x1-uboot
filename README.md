@@ -41,6 +41,7 @@ Clean, upstream-grade patch series on pristine **U-Boot** (base commit `c1958b5f
 13. `0013-arm-dts-mediatek-Add-MT6789-SoC-device-tree.patch`
 14. `0014-board-mediatek-Add-Advan-X1-MT6789-board-support.patch`
 15. `0015-disk-part_efi-Reject-out-of-bounds-GPT-partition-ent.patch`
+16. `0016-boot-bootdev-Support-up-to-MAX_SEARCH_PARTITIONS-and.patch`
 
 ## Verifying, Building & Packing with Loki
 
