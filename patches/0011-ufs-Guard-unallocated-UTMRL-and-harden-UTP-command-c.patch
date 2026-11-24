@@ -1,6 +1,6 @@
-From 2591e64e663d1b947d8ace31f7d5834a583ee24d Mon Sep 17 00:00:00 2001
-From: sysretq0 <324514544+sysretq0@users.noreply.github.com>
-Date: Sun, 22 Nov 2026 04:58:33 +0000
+From d54085b9d8352ba7bfbd3a8485275140470b477a Mon Sep 17 00:00:00 2001
+From: sysretq0 <sysretq0@proton.me>
+Date: Tue, 24 Nov 2026 15:02:26 +0000
 Subject: [PATCH] ufs: Guard unallocated UTMRL and harden UTP command
  completion
 
@@ -15,13 +15,13 @@ In ufshcd_send_command() and ufs_scsi_exec():
   of ufshcd_send_command().
 - Retry once on transient SCSI UNIT ATTENTION (sense key 0x06).
 
-Signed-off-by: sysretq0 <324514544+sysretq0@users.noreply.github.com>
+Signed-off-by: sysretq0 <sysretq0@proton.me>
 ---
  drivers/ufs/ufs-uclass.c | 70 ++++++++++++++++++++++++++++++++--------
  1 file changed, 56 insertions(+), 14 deletions(-)
 
 diff --git a/drivers/ufs/ufs-uclass.c b/drivers/ufs/ufs-uclass.c
-index 2ca4fb2a..e00c1a44 100644
+index 2ca4fb2a0..e00c1a44e 100644
 --- a/drivers/ufs/ufs-uclass.c
 +++ b/drivers/ufs/ufs-uclass.c
 @@ -419,8 +419,9 @@ static inline int ufshcd_get_lists_status(u32 reg)

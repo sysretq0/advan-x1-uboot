@@ -1,6 +1,6 @@
-From 9e954e174020dbb6067f2555acc0029d71fa5b5a Mon Sep 17 00:00:00 2001
-From: sysretq0 <324514544+sysretq0@users.noreply.github.com>
-Date: Sun, 22 Nov 2026 04:56:55 +0000
+From 94fc28b83abe4e8b6d7bfe4294bbe158f1ec3bfa Mon Sep 17 00:00:00 2001
+From: sysretq0 <sysretq0@proton.me>
+Date: Tue, 24 Nov 2026 15:02:24 +0000
 Subject: [PATCH] video: Add VIDEO_A8R8G8B8 format for opaque alpha
  framebuffers
 
@@ -11,7 +11,7 @@ VIDEO_A8R8G8B8 so display controllers with per-pixel alpha blending
 (such as MediaTek DISP_OVL0) render console pixels visibly while
 preserving existing VIDEO_X8R8G8B8 behavior and sandbox video tests.
 
-Signed-off-by: sysretq0 <324514544+sysretq0@users.noreply.github.com>
+Signed-off-by: sysretq0 <sysretq0@proton.me>
 ---
  drivers/video/simplefb.c     | 6 ++++--
  drivers/video/video-uclass.c | 5 +++++
@@ -19,7 +19,7 @@ Signed-off-by: sysretq0 <324514544+sysretq0@users.noreply.github.com>
  3 files changed, 10 insertions(+), 2 deletions(-)
 
 diff --git a/drivers/video/simplefb.c b/drivers/video/simplefb.c
-index ba08fc04..c726fcbb 100644
+index ba08fc043..c726fcbb3 100644
 --- a/drivers/video/simplefb.c
 +++ b/drivers/video/simplefb.c
 @@ -86,8 +86,10 @@ static int simple_video_probe(struct udevice *dev)
@@ -36,7 +36,7 @@ index ba08fc04..c726fcbb 100644
  		uc_priv->format = VIDEO_X8R8G8B8;
  	} else if (strcmp(format, "a2r10g10b10") == 0 ||
 diff --git a/drivers/video/video-uclass.c b/drivers/video/video-uclass.c
-index 22183d00..fa26171c 100644
+index 22183d00d..fa26171c4 100644
 --- a/drivers/video/video-uclass.c
 +++ b/drivers/video/video-uclass.c
 @@ -354,6 +354,11 @@ u32 video_index_to_colour(struct video_priv *priv, enum colour_idx idx)
@@ -52,7 +52,7 @@ index 22183d00..fa26171c 100644
  				return (colours[idx].r << 16) |
  				       (colours[idx].g <<  8) |
 diff --git a/include/video.h b/include/video.h
-index 8e4c1544..1be5c5b3 100644
+index 8e4c1544e..1be5c5b35 100644
 --- a/include/video.h
 +++ b/include/video.h
 @@ -66,6 +66,7 @@ enum video_format {

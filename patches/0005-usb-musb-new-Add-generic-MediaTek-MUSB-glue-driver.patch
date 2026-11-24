@@ -1,6 +1,6 @@
-From 911c78d7e8c8a726320edf5615abc8694c4e9049 Mon Sep 17 00:00:00 2001
-From: sysretq0 <324514544+sysretq0@users.noreply.github.com>
-Date: Sun, 22 Nov 2026 04:53:23 +0000
+From f353b11d1f078a0a0895beafa9b798527bd31a2d Mon Sep 17 00:00:00 2001
+From: sysretq0 <sysretq0@proton.me>
+Date: Tue, 24 Nov 2026 15:02:22 +0000
 Subject: [PATCH] usb: musb-new: Add generic MediaTek MUSB glue driver
 
 Add a generic MediaTek MUSB host/gadget glue driver supporting
@@ -8,7 +8,7 @@ MT6789 (Helio G99) and compatible MediaTek SoCs using DM clock bulk,
 generic PHY (phy-mtk-tphy), and MediaTek L1 write-1-to-clear
 interrupt semantics.
 
-Signed-off-by: sysretq0 <324514544+sysretq0@users.noreply.github.com>
+Signed-off-by: sysretq0 <sysretq0@proton.me>
 ---
  drivers/usb/musb-new/Kconfig    |  10 ++
  drivers/usb/musb-new/Makefile   |   1 +
@@ -17,7 +17,7 @@ Signed-off-by: sysretq0 <324514544+sysretq0@users.noreply.github.com>
  create mode 100644 drivers/usb/musb-new/mediatek.c
 
 diff --git a/drivers/usb/musb-new/Kconfig b/drivers/usb/musb-new/Kconfig
-index 208e47d8..f4e90746 100644
+index 208e47d8f..19d8a1a3d 100644
 --- a/drivers/usb/musb-new/Kconfig
 +++ b/drivers/usb/musb-new/Kconfig
 @@ -59,6 +59,16 @@ config USB_MUSB_DSPS
@@ -38,7 +38,7 @@ index 208e47d8..f4e90746 100644
  	bool "Enable Mediatek MT85XX DRC USB controller"
  	depends on ARCH_MEDIATEK
 diff --git a/drivers/usb/musb-new/Makefile b/drivers/usb/musb-new/Makefile
-index 6638772d..ee9cb9e7 100644
+index 6638772da..ee9cb9e7b 100644
 --- a/drivers/usb/musb-new/Makefile
 +++ b/drivers/usb/musb-new/Makefile
 @@ -8,6 +8,7 @@ obj-$(CONFIG_USB_MUSB_HOST) += musb_host.o musb_core.o musb_uboot.o
@@ -51,7 +51,7 @@ index 6638772d..ee9cb9e7 100644
  obj-$(CONFIG_USB_MUSB_PIC32) += pic32.o
 diff --git a/drivers/usb/musb-new/mediatek.c b/drivers/usb/musb-new/mediatek.c
 new file mode 100644
-index 00000000..359329c8
+index 000000000..359329c88
 --- /dev/null
 +++ b/drivers/usb/musb-new/mediatek.c
 @@ -0,0 +1,274 @@

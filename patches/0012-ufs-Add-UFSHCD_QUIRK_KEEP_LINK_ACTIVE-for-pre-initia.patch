@@ -1,6 +1,6 @@
-From 095045b8c7039332fca75edf7da8613d8333fd1d Mon Sep 17 00:00:00 2001
-From: sysretq0 <324514544+sysretq0@users.noreply.github.com>
-Date: Sun, 22 Nov 2026 04:59:20 +0000
+From 8d3bd6e78c87fad55178f74961f14014e77494f8 Mon Sep 17 00:00:00 2001
+From: sysretq0 <sysretq0@proton.me>
+Date: Tue, 24 Nov 2026 15:02:26 +0000
 Subject: [PATCH] ufs: Add UFSHCD_QUIRK_KEEP_LINK_ACTIVE for pre-initialized
  handoff
 
@@ -15,7 +15,7 @@ falling back to a full reset/init on failure.
 Enable this quirk in ufs-mediatek when the controller and device are
 already active at init time.
 
-Signed-off-by: sysretq0 <324514544+sysretq0@users.noreply.github.com>
+Signed-off-by: sysretq0 <sysretq0@proton.me>
 ---
  drivers/ufs/ufs-mediatek.c |  6 +++++-
  drivers/ufs/ufs-uclass.c   | 43 ++++++++++++++++++++++++++++++++++++++
@@ -23,7 +23,7 @@ Signed-off-by: sysretq0 <324514544+sysretq0@users.noreply.github.com>
  3 files changed, 54 insertions(+), 1 deletion(-)
 
 diff --git a/drivers/ufs/ufs-mediatek.c b/drivers/ufs/ufs-mediatek.c
-index cda36ac8..d801453d 100644
+index 1e55efa5e..79a31815e 100644
 --- a/drivers/ufs/ufs-mediatek.c
 +++ b/drivers/ufs/ufs-mediatek.c
 @@ -332,7 +332,11 @@ static int ufs_mtk_init(struct ufs_hba *hba)
@@ -40,7 +40,7 @@ index cda36ac8..d801453d 100644
  
  	return 0;
 diff --git a/drivers/ufs/ufs-uclass.c b/drivers/ufs/ufs-uclass.c
-index e00c1a44..67526261 100644
+index e00c1a44e..67526261b 100644
 --- a/drivers/ufs/ufs-uclass.c
 +++ b/drivers/ufs/ufs-uclass.c
 @@ -2318,6 +2318,49 @@ int ufshcd_probe(struct udevice *ufs_dev, struct ufs_hba_ops *hba_ops)
@@ -94,7 +94,7 @@ index e00c1a44..67526261 100644
  	err = ufshcd_vops_device_reset(hba);
  	if (err) {
 diff --git a/drivers/ufs/ufs.h b/drivers/ufs/ufs.h
-index 9f557356..f1784426 100644
+index 9f5573560..f17844265 100644
 --- a/drivers/ufs/ufs.h
 +++ b/drivers/ufs/ufs.h
 @@ -694,6 +694,12 @@ enum ufshcd_quirks {

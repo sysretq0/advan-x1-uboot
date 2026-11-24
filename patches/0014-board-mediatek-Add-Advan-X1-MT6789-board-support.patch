@@ -1,6 +1,6 @@
-From affa6a42bfaaef2aec5bd3abfd748186a5d2fe80 Mon Sep 17 00:00:00 2001
-From: sysretq0 <324514544+sysretq0@users.noreply.github.com>
-Date: Sun, 22 Nov 2026 05:01:43 +0000
+From 05e089f6e80bf2ca3acb7a2d9dbd206518d81160 Mon Sep 17 00:00:00 2001
+From: sysretq0 <sysretq0@proton.me>
+Date: Tue, 24 Nov 2026 15:02:27 +0000
 Subject: [PATCH] board: mediatek: Add Advan X1 (MT6789) board support
 
 Add board support, device tree, configuration header, MAINTAINERS, and
@@ -12,16 +12,16 @@ to alpha=0, and patches simple-framebuffer reg in-place before DM video
 probes. board_late_init() initializes video and probes UFS/SCSI storage
 for FIT / bootstd / Fastboot boot.
 
-Signed-off-by: sysretq0 <324514544+sysretq0@users.noreply.github.com>
+Signed-off-by: sysretq0 <sysretq0@proton.me>
 ---
  arch/arm/dts/Makefile             |   1 +
- arch/arm/dts/mt6789-advan-x1.dts  | 110 +++++++++++++++++++++++++++
- board/mediatek/mt6789/MAINTAINERS |  15 ++++
+ arch/arm/dts/mt6789-advan-x1.dts  | 114 +++++++++++++++++++++++
+ board/mediatek/mt6789/MAINTAINERS |  15 +++
  board/mediatek/mt6789/Makefile    |   3 +
- board/mediatek/mt6789/mt6789.c    | 121 ++++++++++++++++++++++++++++++
- configs/mt6789_advan_x1_defconfig |  62 +++++++++++++++
- include/configs/mt6789.h          |  55 ++++++++++++++
- 7 files changed, 367 insertions(+)
+ board/mediatek/mt6789/mt6789.c    | 150 ++++++++++++++++++++++++++++++
+ configs/mt6789_advan_x1_defconfig |  67 +++++++++++++
+ include/configs/mt6789.h          |  59 ++++++++++++
+ 7 files changed, 409 insertions(+)
  create mode 100644 arch/arm/dts/mt6789-advan-x1.dts
  create mode 100644 board/mediatek/mt6789/MAINTAINERS
  create mode 100644 board/mediatek/mt6789/Makefile
@@ -30,7 +30,7 @@ Signed-off-by: sysretq0 <324514544+sysretq0@users.noreply.github.com>
  create mode 100644 include/configs/mt6789.h
 
 diff --git a/arch/arm/dts/Makefile b/arch/arm/dts/Makefile
-index 22f10c8e..6304b9c8 100644
+index 22f10c8ec..6304b9c87 100644
 --- a/arch/arm/dts/Makefile
 +++ b/arch/arm/dts/Makefile
 @@ -1055,6 +1055,7 @@ mt8391-genio-720-evk-ufs-edp-dtbs := mt8391-genio-720-evk.dtb \
@@ -43,10 +43,10 @@ index 22f10c8e..6304b9c8 100644
  	mt7622-bananapi-bpi-r64.dtb \
 diff --git a/arch/arm/dts/mt6789-advan-x1.dts b/arch/arm/dts/mt6789-advan-x1.dts
 new file mode 100644
-index 00000000..da7068b2
+index 000000000..2d5bdf54a
 --- /dev/null
 +++ b/arch/arm/dts/mt6789-advan-x1.dts
-@@ -0,0 +1,110 @@
+@@ -0,0 +1,114 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Advan X1 (MediaTek MT6789 / Helio G99) U-Boot Device Tree.
@@ -88,14 +88,18 @@ index 00000000..da7068b2
 +	};
 +
 +	/*
-+	 * Clean DRAM windows outside secure/EMI-MPU mblock reservations:
++	 * Clean DRAM windows outside secure/coprocessor/modem reservations:
 +	 *   - Bank 0: 0x60000000..0x6EFFFFFF (240 MiB, U-Boot & kernel staging)
-+	 *   - Bank 1: 0x140000000..0x2296FFFFF (3.64 GiB high RAM)
++	 *   - Bank 1: 0x100000000..0x13FDFFFFF (1022 MiB, stops 2 MiB below dramc-rk0)
++	 *   - Bank 2: 0x140000000..0x23FDFFFFF (4094 MiB, stops 2 MiB below dramc-rk1)
++	 * Linux boots its own FIT DTB (CONFIG_ARCH_FIXUP_FDT_MEMORY=n) with the
++	 * full 8 GiB /memory@40000000 node and all stock no-map carveouts.
 +	 */
 +	memory@60000000 {
 +		device_type = "memory";
 +		reg = <0x0 0x60000000 0x0 0x0f000000>,
-+		      <0x1 0x40000000 0x0 0xe9700000>;
++		      <0x1 0x00000000 0x0 0x3fe00000>,
++		      <0x1 0x40000000 0x0 0xffe00000>;
 +	};
 +
 +	reserved-memory {
@@ -159,12 +163,12 @@ index 00000000..da7068b2
 +};
 diff --git a/board/mediatek/mt6789/MAINTAINERS b/board/mediatek/mt6789/MAINTAINERS
 new file mode 100644
-index 00000000..5300abcf
+index 000000000..da69db25e
 --- /dev/null
 +++ b/board/mediatek/mt6789/MAINTAINERS
 @@ -0,0 +1,15 @@
 +ADVAN X1 (MEDIATEK MT6789 / HELIO G99)
-+M:	sysretq0 <324514544+sysretq0@users.noreply.github.com>
++M:	sysretq0 <sysretq0@proton.me>
 +S:	Maintained
 +F:	arch/arm/dts/mt6789.dtsi
 +F:	arch/arm/dts/mt6789-advan-x1.dts
@@ -180,7 +184,7 @@ index 00000000..5300abcf
 +F:	include/dt-bindings/reset/mt6789-resets.h
 diff --git a/board/mediatek/mt6789/Makefile b/board/mediatek/mt6789/Makefile
 new file mode 100644
-index 00000000..1d7de2d3
+index 000000000..1d7de2d3f
 --- /dev/null
 +++ b/board/mediatek/mt6789/Makefile
 @@ -0,0 +1,3 @@
@@ -189,16 +193,17 @@ index 00000000..1d7de2d3
 +obj-y += mt6789.o
 diff --git a/board/mediatek/mt6789/mt6789.c b/board/mediatek/mt6789/mt6789.c
 new file mode 100644
-index 00000000..1fdf9f0c
+index 000000000..c4e5c42f0
 --- /dev/null
 +++ b/board/mediatek/mt6789/mt6789.c
-@@ -0,0 +1,121 @@
+@@ -0,0 +1,150 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Board support for Advan X1 (MediaTek MT6789 / Helio G99).
 + */
 +
 +#include <dm.h>
++#include <fastboot.h>
 +#include <fdt_support.h>
 +#include <init.h>
 +#include <log.h>
@@ -215,6 +220,12 @@ index 00000000..1fdf9f0c
 +#define MT6789_FB_WINDOW_MAX	0xff800000U
 +#define MT6789_FB_PHYS_0	0xfe007000U
 +#define MT6789_FB_SIZE_BYTES	0x00a3a000U /* 1088 * 4 * 2464 */
++
++/* MT6789 TOPRGU WDT_NONRST_REG2 reboot mode bits (matches Linux syscon-reboot-mode) */
++#define MT6789_WDT_NONRST_REG2	0x10007024U
++#define MT6789_REBOOT_MODE_MASK	0x0000000fU
++#define MT6789_REBOOT_RECOVERY	0x00000002U
++#define MT6789_REBOOT_BOOTLDR	0x00000003U
 +
 +static u32 mt6789_active_fb(void)
 +{
@@ -314,12 +325,34 @@ index 00000000..1fdf9f0c
 +
 +	return 0;
 +}
++
++#if IS_ENABLED(CONFIG_FASTBOOT)
++int fastboot_set_reboot_flag(enum fastboot_reboot_reason reason)
++{
++	u32 mode;
++
++	switch (reason) {
++	case FASTBOOT_REBOOT_REASON_BOOTLOADER:
++	case FASTBOOT_REBOOT_REASON_FASTBOOTD:
++		mode = MT6789_REBOOT_BOOTLDR;
++		break;
++	case FASTBOOT_REBOOT_REASON_RECOVERY:
++		mode = MT6789_REBOOT_RECOVERY;
++		break;
++	default:
++		return -EINVAL;
++	}
++
++	clrsetbits_le32(MT6789_WDT_NONRST_REG2, MT6789_REBOOT_MODE_MASK, mode);
++	return 0;
++}
++#endif
 diff --git a/configs/mt6789_advan_x1_defconfig b/configs/mt6789_advan_x1_defconfig
 new file mode 100644
-index 00000000..90721020
+index 000000000..b662177ab
 --- /dev/null
 +++ b/configs/mt6789_advan_x1_defconfig
-@@ -0,0 +1,66 @@
+@@ -0,0 +1,67 @@
 +CONFIG_ARM=y
 +CONFIG_COUNTER_FREQUENCY=13000000
 +CONFIG_POSITION_INDEPENDENT=y
@@ -327,13 +360,14 @@ index 00000000..90721020
 +CONFIG_TEXT_BASE=0x60000000
 +CONFIG_SYS_MALLOC_LEN=0x1000000
 +CONFIG_SYS_MALLOC_F_LEN=0x20000
-+CONFIG_NR_DRAM_BANKS=2
++CONFIG_NR_DRAM_BANKS=3
 +CONFIG_DM_GPIO=y
 +CONFIG_DEFAULT_DEVICE_TREE="mt6789-advan-x1"
 +CONFIG_OF_LIBFDT_OVERLAY=y
 +CONFIG_SYS_LOAD_ADDR=0x61000000
 +CONFIG_PRE_CON_BUF_ADDR=0x60200000
 +CONFIG_OF_BOARD_FIXUP=y
++# CONFIG_ARCH_FIXUP_FDT_MEMORY is not set
 +CONFIG_FIT=y
 +CONFIG_BOOTSTD_FULL=y
 +CONFIG_BOOTCOMMAND="run menucmd"
@@ -352,7 +386,7 @@ index 00000000..90721020
 +CONFIG_BUTTON_MTK_KEYS=y
 +CONFIG_CLK=y
 +CONFIG_USB_FUNCTION_FASTBOOT=y
-+CONFIG_FASTBOOT_BUF_ADDR=0x62000000
++CONFIG_FASTBOOT_BUF_ADDR=0x52000000
 +CONFIG_FASTBOOT_BUF_SIZE=0x08000000
 +CONFIG_FASTBOOT_FLASH=y
 +CONFIG_FASTBOOT_FLASH_BLOCK=y
@@ -388,10 +422,10 @@ index 00000000..90721020
 +CONFIG_WDT_MTK=y
 diff --git a/include/configs/mt6789.h b/include/configs/mt6789.h
 new file mode 100644
-index 00000000..7957ea9f
+index 000000000..234ff4164
 --- /dev/null
 +++ b/include/configs/mt6789.h
-@@ -0,0 +1,57 @@
+@@ -0,0 +1,59 @@
 +/* SPDX-License-Identifier: GPL-2.0-only */
 +/*
 + * Configuration header for MediaTek MT6789 (Advan X1).
@@ -407,28 +441,30 @@ index 00000000..7957ea9f
 +#define CFG_SYS_INIT_RAM_SIZE		SZ_2M
 +
 +/*
-+ * Standard ARM64 staging coordinates inside the clean 0x60000000..0x6F000000
-+ * DRAM window (2 MiB aligned for Linux Image):
-+ *   - kernel_addr_r      : 0x61000000 (88 MiB headroom for Image + BSS)
-+ *   - ramdisk_addr_r     : 0x66800000 (24 MiB headroom before FIT staging)
-+ *   - fit_addr_r         : 0x68000000 (80 MiB staging window for FIT / Image)
-+ *   - fdt_high/initrd_hi : 0x6E000000 (keeps relocated FDT/initrd in Bank 0)
++ * Non-overlapping ARM64 staging coordinates inside 0x60000000..0x6D000000
++ * (Fastboot buffer sits separately at 0x52000000..0x59FFFFFF; U-Boot
++ * relocated heap/stack sits above ~0x6DD00000):
++ *   - kernel_addr_r      : 0x61000000 (80 MiB headroom for Image + BSS)
++ *   - kernel_comp_addr_r : 0x66000000 (32 MiB compressed kernel scratch)
++ *   - fit_addr_r         : 0x68000000 (48 MiB FIT staging buffer)
++ *   - ramdisk_addr_r     : 0x6B000000 (32 MiB loose initrd staging)
++ *   - fdt_high/initrd_hi : 0x6D000000 (cleanly below relocated U-Boot)
 + */
 +#define CFG_EXTRA_ENV_SETTINGS \
 +	"stdin=serial,button-kbd\0" \
 +	"stdout=serial,vidconsole\0" \
 +	"stderr=serial,vidconsole\0" \
-+	"fdt_high=0x6e000000\0" \
-+	"initrd_high=0x6e000000\0" \
++	"fdt_high=0x6d000000\0" \
++	"initrd_high=0x6d000000\0" \
 +	"scriptaddr=0x60300000\0" \
 +	"pxefile_addr_r=0x60380000\0" \
 +	"fdt_addr_r=0x60400000\0" \
 +	"fdtoverlay_addr_r=0x60500000\0" \
 +	"kernel_addr_r=0x61000000\0" \
-+	"ramdisk_addr_r=0x66800000\0" \
++	"kernel_comp_addr_r=0x66000000\0" \
++	"kernel_comp_size=0x02000000\0" \
 +	"fit_addr_r=0x68000000\0" \
-+	"kernel_comp_addr_r=0x68000000\0" \
-+	"kernel_comp_size=0x03000000\0" \
++	"ramdisk_addr_r=0x6b000000\0" \
 +	"menucmd=bootmenu -1\0" \
 +	"bootmenu_0=Boot Mainline Linux=" \
 +		"bootmeth order script extlinux; " \

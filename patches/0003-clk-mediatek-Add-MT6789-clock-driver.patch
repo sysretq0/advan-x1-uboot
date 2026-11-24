@@ -1,13 +1,13 @@
-From 200f28f4867a759b670db256cb1b6b360053916e Mon Sep 17 00:00:00 2001
-From: sysretq0 <324514544+sysretq0@users.noreply.github.com>
-Date: Sun, 22 Nov 2026 04:51:29 +0000
+From 71e557d9ef8fedab6d8b0778c309c970d5defab9 Mon Sep 17 00:00:00 2001
+From: sysretq0 <sysretq0@proton.me>
+Date: Tue, 24 Nov 2026 15:02:21 +0000
 Subject: [PATCH] clk: mediatek: Add MT6789 clock driver
 
 Add the MediaTek MT6789 (Helio G99 / MT8781) clock controller driver
 covering apmixedsys PLLs, topckgen fixed/divider/mux clocks, and
 infracfg_ao peripheral clock gates.
 
-Signed-off-by: sysretq0 <324514544+sysretq0@users.noreply.github.com>
+Signed-off-by: sysretq0 <sysretq0@proton.me>
 ---
  drivers/clk/mediatek/Makefile     |   1 +
  drivers/clk/mediatek/clk-mt6789.c | 618 ++++++++++++++++++++++++++++++
@@ -15,7 +15,7 @@ Signed-off-by: sysretq0 <324514544+sysretq0@users.noreply.github.com>
  create mode 100644 drivers/clk/mediatek/clk-mt6789.c
 
 diff --git a/drivers/clk/mediatek/Makefile b/drivers/clk/mediatek/Makefile
-index 00ebb50a..c1170640 100644
+index 00ebb50ae..c1170640c 100644
 --- a/drivers/clk/mediatek/Makefile
 +++ b/drivers/clk/mediatek/Makefile
 @@ -3,6 +3,7 @@
@@ -28,7 +28,7 @@ index 00ebb50a..c1170640 100644
  obj-$(CONFIG_TARGET_MT7629) += clk-mt7629.o
 diff --git a/drivers/clk/mediatek/clk-mt6789.c b/drivers/clk/mediatek/clk-mt6789.c
 new file mode 100644
-index 00000000..f3e8c033
+index 000000000..f3e8c0337
 --- /dev/null
 +++ b/drivers/clk/mediatek/clk-mt6789.c
 @@ -0,0 +1,618 @@

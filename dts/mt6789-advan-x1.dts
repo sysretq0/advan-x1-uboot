@@ -39,14 +39,18 @@
 	};
 
 	/*
-	 * Clean DRAM windows outside secure/EMI-MPU mblock reservations:
+	 * Clean DRAM windows outside secure/coprocessor/modem reservations:
 	 *   - Bank 0: 0x60000000..0x6EFFFFFF (240 MiB, U-Boot & kernel staging)
-	 *   - Bank 1: 0x140000000..0x2296FFFFF (3.64 GiB high RAM)
+	 *   - Bank 1: 0x100000000..0x13FDFFFFF (1022 MiB, stops 2 MiB below dramc-rk0)
+	 *   - Bank 2: 0x140000000..0x23FDFFFFF (4094 MiB, stops 2 MiB below dramc-rk1)
+	 * Linux boots its own FIT DTB (CONFIG_ARCH_FIXUP_FDT_MEMORY=n) with the
+	 * full 8 GiB /memory@40000000 node and all stock no-map carveouts.
 	 */
 	memory@60000000 {
 		device_type = "memory";
 		reg = <0x0 0x60000000 0x0 0x0f000000>,
-		      <0x1 0x40000000 0x0 0xe9700000>;
+		      <0x1 0x00000000 0x0 0x3fe00000>,
+		      <0x1 0x40000000 0x0 0xffe00000>;
 	};
 
 	reserved-memory {

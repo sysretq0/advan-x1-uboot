@@ -1,20 +1,24 @@
-From b063c483795cf3646ba4292628fc8b49b800a803 Mon Sep 17 00:00:00 2001
-From: sysretq0 <324514544+sysretq0@users.noreply.github.com>
-Date: Sun, 22 Nov 2026 04:52:42 +0000
+From 1105c4a502054665acf25c9c04a23874c0270ade Mon Sep 17 00:00:00 2001
+From: sysretq0 <sysretq0@proton.me>
+Date: Tue, 24 Nov 2026 15:02:22 +0000
 Subject: [PATCH] power: pmic: mtk-pwrap: Add MT6789 support and bind PMIC keys
 
-Add the mediatek,mt6789-pwrap compatible string (using the MT8195
-register map) and bind an optional 'keys' subnode under the PMIC
-child node so standard Linux PMIC key bindings (mediatek,mt6358-keys)
-probe as children of the UCLASS_PMIC pwrap device.
+Add a dedicated MT6789 register map (INT_EN=0x450, INT_FLG=0x458,
+INT_CLR=0x45C, SWINF2 0x880..0x8A8, arb_en_all=0x777f) and
+mediatek,mt6789-pwrap compatible string instead of reusing MT8195's
+0x420 interrupt offsets.
 
-Signed-off-by: sysretq0 <324514544+sysretq0@users.noreply.github.com>
+Also bind an optional 'keys' subnode under the PMIC child node so
+standard Linux PMIC key bindings (mediatek,mt6358-keys) probe as
+children of the UCLASS_PMIC pwrap device.
+
+Signed-off-by: sysretq0 <sysretq0@proton.me>
 ---
- drivers/power/pmic/mtk-pwrap.c | 12 +++++++++++-
- 1 file changed, 11 insertions(+), 1 deletion(-)
+ drivers/power/pmic/mtk-pwrap.c | 33 ++++++++++++++++++++++++++++++++-
+ 1 file changed, 32 insertions(+), 1 deletion(-)
 
 diff --git a/drivers/power/pmic/mtk-pwrap.c b/drivers/power/pmic/mtk-pwrap.c
-index 468af1fb..61da7727 100644
+index 468af1fba..693970149 100644
 --- a/drivers/power/pmic/mtk-pwrap.c
 +++ b/drivers/power/pmic/mtk-pwrap.c
 @@ -10,6 +10,7 @@
@@ -25,7 +29,27 @@ index 468af1fb..61da7727 100644
  #include <linux/bitfield.h>
  #include <linux/err.h>
  #include <power/pmic.h>
-@@ -803,7 +804,7 @@ static int mtk_pwrap_probe(struct udevice *dev)
+@@ -284,6 +285,19 @@ enum pwrap_regs {
+ 	PWRAP_WDT_SRC_EN_1,
+ };
+ 
++static int mt6789_regs[] = {
++	[PWRAP_INIT_DONE2] =		0x0,
++	[PWRAP_TIMER_EN] =		0x3E4,
++	[PWRAP_INT_EN] =		0x450,
++	[PWRAP_INT_FLG] =		0x458,
++	[PWRAP_INT_CLR] =		0x45C,
++	[PWRAP_WACS2_CMD] =		0x880,
++	[PWRAP_SWINF_2_WDATA_31_0] =	0x884,
++	[PWRAP_SWINF_2_RDATA_31_0] =	0x894,
++	[PWRAP_WACS2_VLDCLR] =		0x8A4,
++	[PWRAP_WACS2_RDATA] =		0x8A8,
++};
++
+ static int mt8195_regs[] = {
+ 	[PWRAP_INIT_DONE2] =		0x0,
+ 	[PWRAP_STAUPD_CTRL] =		0x4C,
+@@ -803,7 +817,7 @@ static int mtk_pwrap_probe(struct udevice *dev)
  
  static int mtk_pwrap_bind(struct udevice *dev)
  {
@@ -34,7 +58,7 @@ index 468af1fb..61da7727 100644
  	int children;
  	const struct pmic_child_info *pmic_children_info;
  
-@@ -834,6 +835,14 @@ static int mtk_pwrap_bind(struct udevice *dev)
+@@ -834,6 +848,14 @@ static int mtk_pwrap_bind(struct udevice *dev)
  		dev_dbg(dev, "regulators subnode not found\n");
  	}
  
@@ -49,11 +73,26 @@ index 468af1fb..61da7727 100644
  	return 0;
  }
  
-@@ -885,6 +894,7 @@ static const struct pmic_wrapper_type pwrap_mt8365 = {
+@@ -868,6 +890,14 @@ static struct dm_pmic_ops mtk_pwrap_ops = {
+ 	.write = mtk_pwrap_write,
+ };
+ 
++static const struct pmic_wrapper_type pwrap_mt6789 = {
++	.regs = mt6789_regs,
++	.arb_en_all = 0x777f,
++	.spi_w = PWRAP_MAN_CMD_SPI_WRITE,
++	.wdt_src = PWRAP_WDT_SRC_MASK_ALL,
++	.caps = PWRAP_CAP_ARB,
++};
++
+ static const struct pmic_wrapper_type pwrap_mt8195 = {
+ 	.regs = mt8195_regs,
+ 	.arb_en_all = 0x777f, /* NEED CONFIRM */
+@@ -885,6 +915,7 @@ static const struct pmic_wrapper_type pwrap_mt8365 = {
  };
  
  static const struct udevice_id mtk_pwrap_ids[] = {
-+	{ .compatible = "mediatek,mt6789-pwrap", .data = (ulong)&pwrap_mt8195 },
++	{ .compatible = "mediatek,mt6789-pwrap", .data = (ulong)&pwrap_mt6789 },
  	{ .compatible = "mediatek,mt8195-pwrap", .data = (ulong)&pwrap_mt8195 },
  	{ .compatible = "mediatek,mt8365-pwrap", .data = (ulong)&pwrap_mt8365 },
  	{ .compatible = "mediatek,mt8366-pwrap", .data = (ulong)&pwrap_mt8195 },

@@ -1,6 +1,6 @@
-From 3606044052af9488810610545c6ba2e4a8ee5369 Mon Sep 17 00:00:00 2001
-From: sysretq0 <324514544+sysretq0@users.noreply.github.com>
-Date: Sun, 22 Nov 2026 04:55:16 +0000
+From 0f18b8e2fad9077ca9df723770fe84a830edcd63 Mon Sep 17 00:00:00 2001
+From: sysretq0 <sysretq0@proton.me>
+Date: Tue, 24 Nov 2026 15:02:23 +0000
 Subject: [PATCH] button: Add MediaTek keypad and MT6358 PMIC key drivers
 
 Add UCLASS_BUTTON drivers for MediaTek matrix keypads
@@ -9,16 +9,16 @@ linux,keymap bindings, and MediaTek MT6358/MT6366 PMIC keys
 (mediatek,mt6358-keys) using standard power/home subnodes with
 linux,keycodes under the parent UCLASS_PMIC pwrap device.
 
-Signed-off-by: sysretq0 <324514544+sysretq0@users.noreply.github.com>
+Signed-off-by: sysretq0 <sysretq0@proton.me>
 ---
- drivers/button/Kconfig           |   9 ++
+ drivers/button/Kconfig           |   9 +
  drivers/button/Makefile          |   1 +
  drivers/button/button-mtk-keys.c | 277 +++++++++++++++++++++++++++++++
  3 files changed, 287 insertions(+)
  create mode 100644 drivers/button/button-mtk-keys.c
 
 diff --git a/drivers/button/Kconfig b/drivers/button/Kconfig
-index f9a1c3e2..99a138e8 100644
+index f9a1c3e24..006b572ad 100644
 --- a/drivers/button/Kconfig
 +++ b/drivers/button/Kconfig
 @@ -39,6 +39,15 @@ config BUTTON_GPIO
@@ -38,7 +38,7 @@ index f9a1c3e2..99a138e8 100644
  	bool "Qualcomm power button"
  	depends on BUTTON
 diff --git a/drivers/button/Makefile b/drivers/button/Makefile
-index 336bbc94..ffff3ed7 100644
+index 336bbc940..ffff3ed73 100644
 --- a/drivers/button/Makefile
 +++ b/drivers/button/Makefile
 @@ -5,5 +5,6 @@
@@ -51,7 +51,7 @@ index 336bbc94..ffff3ed7 100644
 \ No newline at end of file
 diff --git a/drivers/button/button-mtk-keys.c b/drivers/button/button-mtk-keys.c
 new file mode 100644
-index 00000000..5556e695
+index 000000000..5556e695a
 --- /dev/null
 +++ b/drivers/button/button-mtk-keys.c
 @@ -0,0 +1,277 @@

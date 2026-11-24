@@ -1,8 +1,8 @@
-From bbe1097a770ab8622c378f5fbf4d0f0ed021a1c3 Mon Sep 17 00:00:00 2001
-From: sysretq0 <324514544+sysretq0@users.noreply.github.com>
-Date: Sun, 22 Nov 2026 04:57:58 +0000
-Subject: [PATCH] ufs: mediatek: Fix PA_SCRAMBLING write and guard optional
- M-PHY
+From baab958342258c5fcf73e359729da355dad02454 Mon Sep 17 00:00:00 2001
+From: sysretq0 <sysretq0@proton.me>
+Date: Tue, 24 Nov 2026 15:02:25 +0000
+Subject: [PATCH] ufs: mediatek: Fix PA_SCRAMBLING write, guard M-PHY, and
+ check SiP SMC
 
 ufs_mtk_pre_link() mistakenly wrote the VS_SAVEPOWERCONTROL register
 value to PA_SCRAMBLING; drop the bogus DME set.
@@ -11,13 +11,16 @@ ufs_mtk_bind_mphy() explicitly treats a missing PHY (-ENOENT) as
 optional, so guard generic_phy_power_on() with generic_phy_valid() in
 ufs_mtk_init().
 
-Signed-off-by: sysretq0 <324514544+sysretq0@users.noreply.github.com>
+Also inspect res.a0 after ufs_mtk_device_reset_ctrl() so BL31 SiP
+rejections propagate instead of silently succeeding.
+
+Signed-off-by: sysretq0 <sysretq0@proton.me>
 ---
- drivers/ufs/ufs-mediatek.c | 20 ++++++++------------
- 1 file changed, 8 insertions(+), 12 deletions(-)
+ drivers/ufs/ufs-mediatek.c | 44 +++++++++++++++++++++++++++-----------
+ 1 file changed, 32 insertions(+), 12 deletions(-)
 
 diff --git a/drivers/ufs/ufs-mediatek.c b/drivers/ufs/ufs-mediatek.c
-index 268627d5..cda36ac8 100644
+index 268627d58..1e55efa5e 100644
 --- a/drivers/ufs/ufs-mediatek.c
 +++ b/drivers/ufs/ufs-mediatek.c
 @@ -106,13 +106,7 @@ static int ufs_mtk_pre_link(struct ufs_hba *hba)
@@ -54,6 +57,49 @@ index 268627d5..cda36ac8 100644
  	}
  
  	ufs_mtk_setup_ref_clk(hba, true);
+@@ -348,11 +344,32 @@ err_clk_enable:
+ 	return err;
+ }
+ 
++static int ufs_mtk_check_sip_res(struct ufs_hba *hba,
++				 const struct arm_smccc_res *res)
++{
++	long ret = (long)res->a0;
++
++	if (ret == ARM_SMCCC_RET_NOT_SUPPORTED) {
++		dev_err(hba->dev, "UFS SiP reset SMC not supported\n");
++		return -EOPNOTSUPP;
++	}
++	if (ret < 0) {
++		dev_err(hba->dev, "UFS SiP reset SMC failed: %ld\n", ret);
++		return -EIO;
++	}
++
++	return 0;
++}
++
+ static int ufs_mtk_device_reset(struct ufs_hba *hba)
+ {
+ 	struct arm_smccc_res res;
++	int ret;
+ 
+ 	ufs_mtk_device_reset_ctrl(0, res);
++	ret = ufs_mtk_check_sip_res(hba, &res);
++	if (ret)
++		return ret;
+ 
+ 	/*
+ 	 * The reset signal is active low. UFS devices shall detect
+@@ -364,6 +381,9 @@ static int ufs_mtk_device_reset(struct ufs_hba *hba)
+ 	udelay(13);
+ 
+ 	ufs_mtk_device_reset_ctrl(1, res);
++	ret = ufs_mtk_check_sip_res(hba, &res);
++	if (ret)
++		return ret;
+ 
+ 	/* Some devices may need time to respond to rst_n */
+ 	mdelay(13);
 -- 
 2.55.0
 

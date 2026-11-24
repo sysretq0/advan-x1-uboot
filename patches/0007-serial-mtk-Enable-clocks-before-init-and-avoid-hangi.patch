@@ -1,6 +1,6 @@
-From 40e594b3099db4e0a5e252d45f0e99f7342d605b Mon Sep 17 00:00:00 2001
-From: sysretq0 <324514544+sysretq0@users.noreply.github.com>
-Date: Sun, 22 Nov 2026 04:56:01 +0000
+From 6b0eb91957fd67fa223b126dec30e7cf317ddd1a Mon Sep 17 00:00:00 2001
+From: sysretq0 <sysretq0@proton.me>
+Date: Tue, 24 Nov 2026 15:02:23 +0000
 Subject: [PATCH] serial: mtk: Enable clocks before init and avoid hanging on
  gated UART
 
@@ -10,13 +10,13 @@ When the UART is gated or firewall-locked by an earlier secure stage
 (such as ATF BL31 kernel-stage transition), mark TX disabled so
 serial_putc() does not spin indefinitely returning -EAGAIN.
 
-Signed-off-by: sysretq0 <324514544+sysretq0@users.noreply.github.com>
+Signed-off-by: sysretq0 <sysretq0@proton.me>
 ---
  drivers/serial/serial_mtk.c | 23 +++++++++++++++++++++--
  1 file changed, 21 insertions(+), 2 deletions(-)
 
 diff --git a/drivers/serial/serial_mtk.c b/drivers/serial/serial_mtk.c
-index 16e4fc08..3d5266f6 100644
+index 16e4fc081..3d5266f6b 100644
 --- a/drivers/serial/serial_mtk.c
 +++ b/drivers/serial/serial_mtk.c
 @@ -20,6 +20,7 @@

@@ -205,7 +205,8 @@
 		};
 
 		u2phy0: t-phy@11f40000 {
-			compatible = "mediatek,generic-tphy-v2";
+			compatible = "mediatek,mt6789-tphy",
+				     "mediatek,generic-tphy-v2";
 			#address-cells = <1>;
 			#size-cells = <1>;
 			ranges = <0x0 0x0 0x11f40000 0x1000>;

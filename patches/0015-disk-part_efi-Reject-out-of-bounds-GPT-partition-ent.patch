@@ -1,6 +1,6 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: sysretq0 <324514544+sysretq0@users.noreply.github.com>
-Date: Sun, 22 Nov 2026 07:47:00 +0000
+From 4db2165e525277e7355dde0437c3fd8d482da35c Mon Sep 17 00:00:00 2001
+From: sysretq0 <sysretq0@proton.me>
+Date: Tue, 24 Nov 2026 15:02:28 +0000
 Subject: [PATCH] disk: part_efi: Reject out-of-bounds GPT partition entries
 
 Validate that each GPT partition table entry has
@@ -14,13 +14,13 @@ lookup and trigger out-of-range block reads (and spurious
 "** fs_devread read error **" logs) during bootstd scanning and
 filesystem probing.
 
-Signed-off-by: sysretq0 <324514544+sysretq0@users.noreply.github.com>
+Signed-off-by: sysretq0 <sysretq0@proton.me>
 ---
- disk/part_efi.c | 28 +++++++++++++++++-----------
- 1 file changed, 17 insertions(+), 11 deletions(-)
+ disk/part_efi.c | 34 ++++++++++++++++++++--------------
+ 1 file changed, 20 insertions(+), 14 deletions(-)
 
 diff --git a/disk/part_efi.c b/disk/part_efi.c
-index d8751297..8fc4cee7 100644
+index d8751297f..8fc4cee71 100644
 --- a/disk/part_efi.c
 +++ b/disk/part_efi.c
 @@ -57,7 +57,7 @@ static int is_gpt_valid(struct blk_desc *desc, u64 lba, gpt_header *pgpt_head,
@@ -105,3 +105,4 @@ index d8751297..8fc4cee7 100644
  /*
 -- 
 2.55.0
+

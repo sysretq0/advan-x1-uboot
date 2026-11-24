@@ -1,6 +1,6 @@
-From 5d4831d7e67e4fcd34263cbd06a421f995ef073d Mon Sep 17 00:00:00 2001
-From: sysretq0 <324514544+sysretq0@users.noreply.github.com>
-Date: Sun, 22 Nov 2026 04:57:23 +0000
+From 8e5df495ba9f771a2a28c414188ef079fc163ebf Mon Sep 17 00:00:00 2001
+From: sysretq0 <sysretq0@proton.me>
+Date: Tue, 24 Nov 2026 15:02:24 +0000
 Subject: [PATCH] efi_loader: gop: Respect video line_length stride and
  A8R8G8B8 alpha
 
@@ -13,13 +13,13 @@ framebuffers (e.g. 1080px visible width with 1088px scanout pitch).
 Also preserve opaque alpha (0xff000000) for 32-bit blits when the
 backing video format is VIDEO_A8R8G8B8.
 
-Signed-off-by: sysretq0 <324514544+sysretq0@users.noreply.github.com>
+Signed-off-by: sysretq0 <sysretq0@proton.me>
 ---
  lib/efi_loader/efi_gop.c | 23 ++++++++++++++++-------
  1 file changed, 16 insertions(+), 7 deletions(-)
 
 diff --git a/lib/efi_loader/efi_gop.c b/lib/efi_loader/efi_gop.c
-index ae44d140..da8b97ea 100644
+index ae44d1402..da8b97eac 100644
 --- a/lib/efi_loader/efi_gop.c
 +++ b/lib/efi_loader/efi_gop.c
 @@ -25,6 +25,7 @@ static const efi_guid_t efi_gop_guid = EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID;

@@ -1,13 +1,13 @@
-From 3afba7df6feb455b1e13c10d1fc8e037a00d0aa3 Mon Sep 17 00:00:00 2001
-From: sysretq0 <324514544+sysretq0@users.noreply.github.com>
-Date: Sun, 22 Nov 2026 04:50:00 +0000
+From f9cf86856a8ba5a8f97cd2c9a139798dcc8f9e5c Mon Sep 17 00:00:00 2001
+From: sysretq0 <sysretq0@proton.me>
+Date: Tue, 24 Nov 2026 15:02:20 +0000
 Subject: [PATCH] dt-bindings: clock: mediatek: Add MT6789 clock and reset
  headers
 
 Add the MediaTek MT6789 (Helio G99 / MT8781) clock and reset binding
 headers, synchronized with the Linux MT6789 clock bindings.
 
-Signed-off-by: sysretq0 <324514544+sysretq0@users.noreply.github.com>
+Signed-off-by: sysretq0 <sysretq0@proton.me>
 ---
  include/dt-bindings/clock/mt6789-clk.h    | 444 ++++++++++++++++++++++
  include/dt-bindings/reset/mt6789-resets.h |  14 +
@@ -17,7 +17,7 @@ Signed-off-by: sysretq0 <324514544+sysretq0@users.noreply.github.com>
 
 diff --git a/include/dt-bindings/clock/mt6789-clk.h b/include/dt-bindings/clock/mt6789-clk.h
 new file mode 100644
-index 00000000..e36ad776
+index 000000000..e36ad7763
 --- /dev/null
 +++ b/include/dt-bindings/clock/mt6789-clk.h
 @@ -0,0 +1,444 @@
@@ -467,7 +467,7 @@ index 00000000..e36ad776
 +#endif /* __DT_BINDINGS_CLOCK_MT6789_CLK_H */
 diff --git a/include/dt-bindings/reset/mt6789-resets.h b/include/dt-bindings/reset/mt6789-resets.h
 new file mode 100644
-index 00000000..43a89940
+index 000000000..43a89940d
 --- /dev/null
 +++ b/include/dt-bindings/reset/mt6789-resets.h
 @@ -0,0 +1,14 @@

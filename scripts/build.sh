@@ -54,6 +54,12 @@ for p in "$REPO"/patches/*.patch; do
 done
 echo "== Applied $PATCH_COUNT patches cleanly =="
 
+echo "== Checking DTS & defconfig sync against patched tree =="
+diff -u "$REPO/dts/mt6789.dtsi" "$WORK/arch/arm/dts/mt6789.dtsi"
+diff -u "$REPO/dts/mt6789-advan-x1.dts" "$WORK/arch/arm/dts/mt6789-advan-x1.dts"
+diff -u "$REPO/configs/mt6789_advan_x1_defconfig" "$WORK/configs/mt6789_advan_x1_defconfig"
+echo "== DTS & defconfig sync: OK (zero drift) =="
+
 if [ "$MODE" = "verify" ]; then
     if [ -x "$WORK/scripts/checkpatch.pl" ]; then
         echo "== Running U-Boot checkpatch.pl =="

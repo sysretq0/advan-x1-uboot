@@ -1,6 +1,6 @@
-From 736c7936c6dfcaa5e817f88fd309f6dda8eebb2d Mon Sep 17 00:00:00 2001
-From: sysretq0 <324514544+sysretq0@users.noreply.github.com>
-Date: Sun, 22 Nov 2026 05:00:35 +0000
+From 30de6bbd1ee12538f0caa6d40c9113dee7d6e21f Mon Sep 17 00:00:00 2001
+From: sysretq0 <sysretq0@proton.me>
+Date: Tue, 24 Nov 2026 15:02:27 +0000
 Subject: [PATCH] arm: dts: mediatek: Add MT6789 SoC device tree
 
 Add the MediaTek MT6789 (Helio G99 / MT8781) SoC device tree include
@@ -8,18 +8,18 @@ covering CPUs, PSCI, GICv3, clocks (apmixedsys, topckgen, infracfg_ao),
 RGU watchdog, keypad matrix, PMIC wrapper, UART0, USB 2.0 MUSB + T-PHY,
 and UFSHCI 2.2.
 
-Signed-off-by: sysretq0 <324514544+sysretq0@users.noreply.github.com>
+Signed-off-by: sysretq0 <sysretq0@proton.me>
 ---
- arch/arm/dts/mt6789.dtsi | 222 +++++++++++++++++++++++++++++++++++++++
- 1 file changed, 222 insertions(+)
+ arch/arm/dts/mt6789.dtsi | 223 +++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 223 insertions(+)
  create mode 100644 arch/arm/dts/mt6789.dtsi
 
 diff --git a/arch/arm/dts/mt6789.dtsi b/arch/arm/dts/mt6789.dtsi
 new file mode 100644
-index 00000000..d1a73691
+index 000000000..b5fc634f6
 --- /dev/null
 +++ b/arch/arm/dts/mt6789.dtsi
-@@ -0,0 +1,222 @@
+@@ -0,0 +1,223 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * MediaTek MT6789 (Helio G99 / MT8781) SoC Device Tree for U-Boot.
@@ -227,7 +227,8 @@ index 00000000..d1a73691
 +		};
 +
 +		u2phy0: t-phy@11f40000 {
-+			compatible = "mediatek,generic-tphy-v2";
++			compatible = "mediatek,mt6789-tphy",
++				     "mediatek,generic-tphy-v2";
 +			#address-cells = <1>;
 +			#size-cells = <1>;
 +			ranges = <0x0 0x0 0x11f40000 0x1000>;
