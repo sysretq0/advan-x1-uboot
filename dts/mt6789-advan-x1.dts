@@ -64,7 +64,7 @@
 		};
 
 		framebuffer_reserved: framebuffer@fe007000 {
-			reg = <0x0 0xfe007000 0x0 0x01ff9000>;
+			reg = <0x0 0xfe007000 0x0 0x01ff8000>;
 			no-map;
 		};
 	};

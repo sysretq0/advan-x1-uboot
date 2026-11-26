@@ -11,16 +11,20 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
-UPSTREAM="${UPSTREAM:-/work/bootloader/u-boot-upstream}"
-WORK="${WORK:-/work/bootloader/u-boot-worktree}"
+UPSTREAM="${UPSTREAM:-$REPO/../u-boot-upstream}"
+WORK="${WORK:-$REPO/../u-boot-worktree}"
 OUT="${OUT:-$REPO/build}"
 BASE_COMMIT="c1958b5f6cce03956d309ce422b5d9f819955d4a"
 JOBS="${JOBS:-1}"
 MODE="${1:-build}"
 
-# Max payload capacity inside 4 MiB lk.img subpartition at 0x210000:
-# 0x400000 - 0x210000 - 512 (mkimg) - 64 (loki_subpart_header) = 2,031,040 bytes
-MAX_UBOOT_BYTES=1966080  # 1.875 MiB (matches CHAINLOAD_MAX_SIZE in loki payload)
+# Max payload capacity inside 4 MiB lk.img subpartition at 0x210000 (Advan X1):
+# LOKI_SUBPART_MAX_PAYLOAD = 0x400000 - 0x210000 - 512 (mkimg) - 64 (loki_subpart_header)
+#                          = 2,031,040 bytes (0x1EFDC0).
+# Cap U-Boot at 1.875 MiB (1,966,080 B) leaving 64 KiB headroom on Advan X1.
+# Note: other MT6789 profiles with higher subpart_offset (e.g. 0x260000 ->
+# LOKI_SUBPART_MAX_PAYLOAD = 1,703,360 B) enforce their own lower bound in loki pack.
+MAX_UBOOT_BYTES=1966080
 
 if [ ! -d "$UPSTREAM/.git" ]; then
     echo "[*] Cloning pristine upstream U-Boot..."
